@@ -16,8 +16,25 @@
 			membershipExceptions = (
 				Actions.sks,
 				Assets.xcassets,
+				Bot.swift,
+				BotBrain.swift,
+				BushSystem.swift,
+				Character.swift,
+				CombatSystem.swift,
+				FX.swift,
+				GameConfig.swift,
 				GameScene.sks,
 				GameScene.swift,
+				GameSettings.swift,
+				InputController.swift,
+				Joystick.swift,
+				MathHelpers.swift,
+				MenuScene.swift,
+				Player.swift,
+				ResultScene.swift,
+				SettingsScene.swift,
+				UIHelpers.swift,
+				ZoneSystem.swift,
 			);
 			target = 7B8D5A172FF1522400AD38B6 /* Lastman iOS */;
 		};
@@ -171,7 +188,7 @@
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;
 				INFOPLIST_KEY_UIStatusBarHidden = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -205,7 +222,7 @@
 				INFOPLIST_KEY_UIMainStoryboardFile = Main;
 				INFOPLIST_KEY_UIStatusBarHidden = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.5;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
