@@ -2,58 +2,117 @@
 //  CombatSystem.swift
 //  Lastman
 //
-//  Tir auto à cadence fixe + projectiles physiques (SPEC §6.2). La résolution
-//  des contacts (dégâts/despawn) est faite par GameScene.didBegin.
+//  Tir auto, projectiles physiques, dégâts (SPEC §6.2).
 //
 
 import SpriteKit
 
+/// Projectile physique : porte son tireur (immunité) et son point d'origine (portée max).
+final class Projectile: SKShapeNode {
+    weak var owner: Character?
+    var origin: CGPoint = .zero
+}
+
 final class CombatSystem {
 
-    private unowned let scene: SKScene
-    private var lastFire: [ObjectIdentifier: TimeInterval] = [:]
+    /// Couche monde où vivent les projectiles et les FX d'impact.
+    private unowned let worldLayer: SKNode
+    /// Screen shake, branché par GameScene.
+    var onImpactShake: ((CGFloat) -> Void)?
 
-    init(scene: SKScene) { self.scene = scene }
+    private var projectiles: [Projectile] = []
 
-    /// Tente de tirer depuis `shooter` vers `direction`, en respectant la cadence.
-    func tryFire(from shooter: Character, direction: CGVector, now: TimeInterval) {
-        guard shooter.isAlive, direction.length > 0.001 else { return }
-        let id = ObjectIdentifier(shooter)
-        if now - (lastFire[id] ?? -999) < GameConfig.fireInterval { return }
-        lastFire[id] = now
-
-        spawnProjectile(from: shooter, direction: direction.normalized())
-        shooter.revealedUntil = now + GameConfig.bushRevealDuration   // tirer révèle (SPEC §6.3)
-        FX.muzzleFlash(at: muzzlePoint(of: shooter, direction: direction), in: scene)
+    init(worldLayer: SKNode) {
+        self.worldLayer = worldLayer
     }
 
-    private func muzzlePoint(of shooter: Character, direction: CGVector) -> CGPoint {
-        shooter.position + direction.normalized() * (GameConfig.characterRadius + 6)
+    // MARK: - Boucle
+
+    func update(dt: TimeInterval, characters: [Character], currentTime: TimeInterval) {
+        // Auto-fire à cadence fixe pour quiconque a un aimIntent (joueur comme bots).
+        for character in characters where character.isAlive {
+            character.fireCooldown = max(0, character.fireCooldown - dt)
+            if let aim = character.aimIntent, aim.length > 0.05, character.fireCooldown <= 0 {
+                fire(from: character, direction: aim.normalized, currentTime: currentTime)
+                character.fireCooldown = GameConfig.fireInterval
+            }
+        }
+
+        // Despawn au-delà de la portée max.
+        projectiles.removeAll { projectile in
+            guard projectile.parent != nil else { return true }
+            if projectile.position.distance(to: projectile.origin) > GameConfig.projectileRange {
+                projectile.removeFromParent()
+                return true
+            }
+            return false
+        }
     }
 
-    private func spawnProjectile(from shooter: Character, direction: CGVector) {
-        let r = GameConfig.projectileRadius
-        let proj = SKShapeNode(circleOfRadius: r)
-        proj.fillColor = shooter.isPlayer ? Player.signature : .white
-        proj.strokeColor = .clear
-        proj.position = muzzlePoint(of: shooter, direction: direction)
-        proj.zPosition = 8
-        proj.name = "projectile"
+    func fire(from shooter: Character, direction: CGVector, currentTime: TimeInterval) {
+        let dir = direction.normalized
+        let spawnPoint = shooter.position + dir * (GameConfig.characterRadius + 10)
 
-        let body = SKPhysicsBody(circleOfRadius: r)
+        let projectile = Projectile()
+        projectile.path = CGPath(ellipseIn: CGRect(x: -3, y: -3, width: 6, height: 6), transform: nil)
+        projectile.fillColor = shooter.color
+        projectile.strokeColor = .white
+        projectile.lineWidth = 1
+        projectile.position = spawnPoint
+        projectile.zPosition = 15
+        projectile.owner = shooter
+        projectile.origin = spawnPoint
+
+        let body = SKPhysicsBody(circleOfRadius: 3)
         body.affectedByGravity = false
         body.linearDamping = 0
+        body.allowsRotation = false
+        body.usesPreciseCollisionDetection = true
         body.categoryBitMask = shooter.isPlayer ? PhysicsCategory.projectilePlayer : PhysicsCategory.projectileBot
-        // Le projectile traverse logiquement mais notifie le contact (pas de rebond).
-        body.collisionBitMask = PhysicsCategory.none
-        body.contactTestBitMask = (shooter.isPlayer ? PhysicsCategory.bot : PhysicsCategory.player) | PhysicsCategory.wall
-        body.velocity = direction * GameConfig.projectileSpeed
-        proj.physicsBody = body
+        body.collisionBitMask = PhysicsCategory.none      // pas de rebond : contact seulement
+        body.contactTestBitMask = PhysicsCategory.anyCharacter | PhysicsCategory.wall
+        projectile.physicsBody = body
 
-        scene.addChild(proj)
+        worldLayer.addChild(projectile)
+        body.velocity = dir * GameConfig.projectileSpeed
 
-        // Despawn au bout de la portée max (SPEC §6.2).
-        let life = TimeInterval(GameConfig.projectileRange / GameConfig.projectileSpeed)
-        proj.run(.sequence([.wait(forDuration: life), .removeFromParent()]))
+        projectiles.append(projectile)
+        shooter.lastShotTime = currentTime      // tirer révèle (SPEC §6.3)
+        FX.muzzleFlash(at: spawnPoint, angle: dir.angle, in: worldLayer)
+    }
+
+    // MARK: - Contacts physiques (appelé par GameScene.didBegin)
+
+    func handleContact(_ contact: SKPhysicsContact) {
+        let pairs = [(contact.bodyA, contact.bodyB), (contact.bodyB, contact.bodyA)]
+        for (first, second) in pairs {
+            guard first.categoryBitMask & PhysicsCategory.anyProjectile != 0,
+                  let projectile = first.node as? Projectile,
+                  projectile.parent != nil else { continue }
+
+            if second.categoryBitMask & PhysicsCategory.anyCharacter != 0 {
+                guard let characterNode = second.node as? CharacterNode,
+                      let target = characterNode.entity,
+                      target.isAlive else { return }
+                // Un projectile ne touche pas son tireur (SPEC §6.2).
+                if target === projectile.owner { return }
+
+                FX.impactSparks(at: projectile.position, color: .white, in: worldLayer)
+                projectile.removeFromParent()
+                onImpactShake?(3)
+                target.takeDamage(GameConfig.projectileDamage)
+            } else if second.categoryBitMask & PhysicsCategory.wall != 0 {
+                FX.impactSparks(at: projectile.position, color: SKColor(white: 1, alpha: 0.6), in: worldLayer, count: 5)
+                projectile.removeFromParent()
+            }
+            return
+        }
+    }
+
+    func removeAllProjectiles() {
+        for projectile in projectiles {
+            projectile.removeFromParent()
+        }
+        projectiles.removeAll()
     }
 }

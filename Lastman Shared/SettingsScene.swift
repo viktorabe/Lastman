@@ -2,90 +2,91 @@
 //  SettingsScene.swift
 //  Lastman
 //
-//  Réglages (SPEC §5) : difficulté + nombre de bots, persistés.
+//  Réglages : nombre de bots + difficulté, persistés (SPEC §5).
 //
 
 import SpriteKit
 
 final class SettingsScene: SKScene {
 
-    private let difficultyValue = SKLabelNode(fontNamed: "AvenirNext-Bold")
-    private let botCountValue = SKLabelNode(fontNamed: "AvenirNext-Bold")
+    private var difficultyButtons: [Difficulty: MenuButton] = [:]
+    private var botCountLabel: SKLabelNode!
 
     static func make(size: CGSize) -> SettingsScene {
         let scene = SettingsScene(size: size)
         scene.scaleMode = .resizeFill
+        scene.anchorPoint = CGPoint(x: 0.5, y: 0.5)
         return scene
     }
 
     override func didMove(to view: SKView) {
-        size = view.bounds.size
-        anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        backgroundColor = SKColor(white: 0.05, alpha: 1.0)
+        backgroundColor = SKColor(white: 0.04, alpha: 1)
 
-        let title = SKLabelNode(fontNamed: "AvenirNext-Heavy")
-        title.text = "RÉGLAGES"
-        title.fontSize = 44
-        title.fontColor = .white
-        title.position = CGPoint(x: 0, y: size.height * 0.30)
+        let title = makeLabel("RÉGLAGES", size: 36, font: UIFont2.heavy)
+        title.position = CGPoint(x: 0, y: size.height * 0.28)
         addChild(title)
 
-        // Difficulté
-        addRow(label: "Difficulté", y: 90, valueNode: difficultyValue,
-               minusName: "diffMinus", plusName: "diffPlus")
-        // Nombre de bots
-        addRow(label: "Bots", y: -40, valueNode: botCountValue,
-               minusName: "botMinus", plusName: "botPlus")
+        // Difficulté (SPEC §7.4) : le curseur pilote les paramètres des bots.
+        let difficultyTitle = makeLabel("Difficulté", size: 18, color: SKColor(white: 1, alpha: 0.6))
+        difficultyTitle.position = CGPoint(x: 0, y: 110)
+        addChild(difficultyTitle)
 
-        addChild(UIHelpers.button(text: "RETOUR", name: "back", at: CGPoint(x: 0, y: -size.height * 0.30),
-                                  color: Player.signature))
+        let buttonWidth: CGFloat = 108
+        let spacing: CGFloat = 116
+        for (index, difficulty) in Difficulty.allCases.enumerated() {
+            let button = MenuButton(text: difficulty.label, width: buttonWidth, height: 44, fontSize: 15) { [weak self] in
+                self?.select(difficulty)
+            }
+            button.position = CGPoint(x: CGFloat(index - 1) * spacing, y: 66)
+            addChild(button)
+            difficultyButtons[difficulty] = button
+        }
+
+        // Nombre de bots.
+        let botsTitle = makeLabel("Nombre de bots", size: 18, color: SKColor(white: 1, alpha: 0.6))
+        botsTitle.position = CGPoint(x: 0, y: -10)
+        addChild(botsTitle)
+
+        let minus = MenuButton(text: "−", width: 56, height: 56, fontSize: 28) { [weak self] in
+            GameSettings.botCount -= 1
+            self?.refresh()
+        }
+        minus.position = CGPoint(x: -90, y: -64)
+        addChild(minus)
+
+        let plus = MenuButton(text: "+", width: 56, height: 56, fontSize: 28) { [weak self] in
+            GameSettings.botCount += 1
+            self?.refresh()
+        }
+        plus.position = CGPoint(x: 90, y: -64)
+        addChild(plus)
+
+        botCountLabel = makeLabel("", size: 34, font: UIFont2.heavy)
+        botCountLabel.position = CGPoint(x: 0, y: -64)
+        addChild(botCountLabel)
+
+        let back = MenuButton(text: "RETOUR") { [weak self] in
+            guard let self, let view = self.view else { return }
+            view.presentScene(MenuScene.make(size: self.size), transition: .fade(withDuration: 0.3))
+        }
+        back.position = CGPoint(x: 0, y: -170)
+        addChild(back)
 
         refresh()
     }
 
-    private func addRow(label: String, y: CGFloat, valueNode: SKLabelNode,
-                        minusName: String, plusName: String) {
-        let title = SKLabelNode(fontNamed: "AvenirNext-Medium")
-        title.text = label
-        title.fontSize = 22
-        title.fontColor = SKColor(white: 1, alpha: 0.6)
-        title.position = CGPoint(x: 0, y: y + 36)
-        addChild(title)
-
-        valueNode.fontSize = 28
-        valueNode.fontColor = .white
-        valueNode.verticalAlignmentMode = .center
-        valueNode.position = CGPoint(x: 0, y: y)
-        addChild(valueNode)
-
-        addChild(UIHelpers.button(text: "−", name: minusName, at: CGPoint(x: -110, y: y),
-                                  color: .white, width: 60, height: 60))
-        addChild(UIHelpers.button(text: "+", name: plusName, at: CGPoint(x: 110, y: y),
-                                  color: .white, width: 60, height: 60))
+    private func select(_ difficulty: Difficulty) {
+        GameSettings.difficulty = difficulty
+        // La difficulté propose son nombre de bots par défaut (SPEC §7.4),
+        // ajustable ensuite avec −/+.
+        GameSettings.botCount = difficulty.defaultBotCount
+        refresh()
     }
 
     private func refresh() {
-        difficultyValue.text = GameSettings.difficulty.title
-        botCountValue.text = "\(GameSettings.botCount)"
-    }
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let t = touches.first,
-              let name = UIHelpers.tappedName(at: t.location(in: self), in: self) else { return }
-        switch name {
-        case "diffMinus": cycleDifficulty(-1)
-        case "diffPlus":  cycleDifficulty(1)
-        case "botMinus":  GameSettings.botCount = GameSettings.botCount - 1; refresh()
-        case "botPlus":   GameSettings.botCount = GameSettings.botCount + 1; refresh()
-        case "back":      view?.presentScene(MenuScene.make(size: size), transition: .push(with: .right, duration: 0.4))
-        default: break
+        for (difficulty, button) in difficultyButtons {
+            button.isHighlighted = difficulty == GameSettings.difficulty
         }
-    }
-
-    private func cycleDifficulty(_ delta: Int) {
-        let all = Difficulty.allCases
-        let idx = (GameSettings.difficulty.rawValue + delta + all.count) % all.count
-        GameSettings.difficulty = all[idx]
-        refresh()
+        botCountLabel.text = "\(GameSettings.botCount)"
     }
 }

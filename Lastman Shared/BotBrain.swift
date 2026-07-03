@@ -2,136 +2,333 @@
 //  BotBrain.swift
 //  Lastman
 //
-//  FSM des bots (SPEC §7). Implémentée comme un enum + switch piloté chaque
-//  frame (steering simple à la main, pas de pathfinding — SPEC §3). La
-//  perception (vision, occlusion buisson, mémoire, reactionDelay) et les
-//  paramètres de difficulté rendent les bots crédibles sans tricher.
+//  FSM des bots (SPEC §7) : GKStateMachine + perception + difficulté.
+//  Le cerveau lit le monde, écrit uniquement moveIntent / aimIntent du bot ;
+//  le tir effectif et la cadence restent gérés par CombatSystem.
 //
 
 import SpriteKit
+import GameplayKit
+
+/// Ce que le cerveau peut interroger dans le monde. GameScene l'implémente.
+protocol BotWorld: AnyObject {
+    var allCharacters: [Character] { get }
+    var zone: ZoneSystem { get }
+    var bushSystem: BushSystem { get }
+    func lineOfSightClear(from: CGPoint, to: CGPoint) -> Bool
+}
+
+// MARK: - Cerveau
 
 final class BotBrain {
 
-    enum State: String { case idle, wander, chase, attack, flee, avoidZone, dead }
+    unowned let bot: Character
+    unowned let world: BotWorld
+    let difficulty: Difficulty
 
-    private(set) var state: State = .idle
+    private var machine: GKStateMachine!
 
-    private unowned let bot: Bot
-    private unowned let world: BotWorld
-    private let difficulty: Difficulty
+    // MARK: Perception (SPEC §7.1)
 
-    // Perception / mémoire
-    private var lastKnownPos: CGPoint?
-    private var lastSeenTime: TimeInterval = 0
-    private var perceivedSince: TimeInterval?
+    /// Cible actuellement perçue (après reactionDelay).
+    private(set) var visibleTarget: Character?
+    /// Dernière position connue, gardée ~2 s après perte de vue.
+    private(set) var lastKnownPosition: CGPoint?
+    private var memoryRemaining: TimeInterval = 0
+    private var reactionRemaining: TimeInterval
+    private var isAlerted = false
 
-    // Wander / strafe
-    private var wanderTarget: CGPoint?
-    private var wanderRetime: TimeInterval = 0
-    private var strafeDir: CGFloat = 1
-    private var strafeFlip: TimeInterval = 0
+    var hasThreat: Bool { visibleTarget != nil || lastKnownPosition != nil }
+    var aimErrorRadians: CGFloat { difficulty.aimErrorDegrees.degreesToRadians }
 
-    init(bot: Bot, world: BotWorld, difficulty: Difficulty) {
+    init(bot: Character, world: BotWorld, difficulty: Difficulty) {
         self.bot = bot
         self.world = world
         self.difficulty = difficulty
+        self.reactionRemaining = difficulty.reactionDelay
+
+        machine = GKStateMachine(states: [
+            BotIdleState(brain: self),
+            BotWanderState(brain: self),
+            BotChaseState(brain: self),
+            BotAttackState(brain: self),
+            BotFleeState(brain: self),
+            BotAvoidZoneState(brain: self),
+            BotDeadState(brain: self),
+        ])
+        enter(BotIdleState.self)
     }
 
-    func update(now: TimeInterval, dt: TimeInterval) {
-        guard bot.isAlive else { state = .dead; return }
-        let pos = bot.position
-        let player = world.player
+    /// Transition + hook d'entrée (begin), sans dépendre des overrides GKState.
+    func enter(_ stateClass: AnyClass) {
+        guard !(machine.currentState?.isMember(of: stateClass) ?? false) else { return }
+        if machine.enter(stateClass) {
+            (machine.currentState as? BotState)?.begin()
+        }
+    }
 
-        // 1) avoidZone — priorité absolue (SPEC §7.3).
-        let outside = !world.isInsideZone(pos)
-        let nearShrinkingEdge = world.zoneIsShrinking
-            && (world.zoneRadius - pos.distance(to: world.zoneCenter)) < GameConfig.zoneAvoidMargin
-        if outside || nearShrinkingEdge {
-            state = .avoidZone
-            steer(toward: world.zoneCenter)
+    // MARK: Boucle
+
+    func update(dt: TimeInterval) {
+        guard bot.isAlive else {
+            enter(BotDeadState.self)
             return
         }
 
-        // 2) Perception du joueur (la seule cible en v1).
-        var canSee = false
-        if player.isAlive {
-            let d = pos.distance(to: player.position)
-            if d <= GameConfig.visionRadius
-                && !player.isHiddenInBush
-                && world.hasLineOfSight(from: pos, to: player.position) {
-                canSee = true
-                lastKnownPos = player.position
-                lastSeenTime = now
-                if perceivedSince == nil { perceivedSince = now }
-            }
-        }
-        if !canSee { perceivedSince = nil }
+        updatePerception(dt: dt)
 
-        let reacted = perceivedSince.map { now - $0 >= difficulty.reactionDelay } ?? false
-        let remembers = lastKnownPos != nil && now - lastSeenTime < GameConfig.targetMemory
-
-        // 3) flee — PV bas tant qu'une menace est connue.
-        if bot.hpFraction < difficulty.fleeThresholdPct && (canSee || remembers) {
-            state = .flee
-            steer(away: lastKnownPos ?? player.position)
-            return
+        // Overrides de priorité (SPEC §7.3) :
+        // avoidZone est prioritaire absolu, flee passe devant le combat.
+        if world.zone.isInDanger(bot.position) {
+            enter(BotAvoidZoneState.self)
+        } else if bot.hpFraction < difficulty.fleeThreshold, hasThreat,
+                  !(machine.currentState is BotAvoidZoneState) {
+            enter(BotFleeState.self)
         }
 
-        // 4) chase / attack / wander.
-        if canSee && reacted {
-            let d = pos.distance(to: player.position)
-            if d <= difficulty.engageDistance {
-                state = .attack
-                attack(target: player, now: now)
-            } else {
-                state = .chase
-                steer(toward: player.position)
+        (machine.currentState as? BotState)?.tick(dt: dt)
+    }
+
+    private func updatePerception(dt: TimeInterval) {
+        // Cible candidate : le vivant le plus proche, dans le rayon de vision,
+        // et pas caché dans un buisson (SPEC §7.1).
+        let candidates = world.allCharacters.filter { other in
+            other !== bot
+                && other.isAlive
+                && other.position.distance(to: bot.position) < GameConfig.visionRadius
+                && world.bushSystem.canPerceive(other)
+        }
+        let nearest = candidates.min {
+            $0.position.distance(to: bot.position) < $1.position.distance(to: bot.position)
+        }
+
+        if let nearest {
+            if !isAlerted {
+                // Délai entre perception et première action (SPEC §7.4).
+                reactionRemaining -= dt
+                if reactionRemaining <= 0 {
+                    isAlerted = true
+                }
             }
-        } else if let lk = lastKnownPos, remembers {
-            state = .chase
-            steer(toward: lk)
+            if isAlerted {
+                visibleTarget = nearest
+                lastKnownPosition = nearest.position
+                memoryRemaining = GameConfig.targetMemoryDuration
+            }
         } else {
-            state = .wander
-            wander(now: now)
+            visibleTarget = nil
+            if lastKnownPosition != nil {
+                memoryRemaining -= dt
+                if memoryRemaining <= 0 {
+                    lastKnownPosition = nil
+                    isAlerted = false
+                    reactionRemaining = difficulty.reactionDelay
+                }
+            } else {
+                isAlerted = false
+                reactionRemaining = difficulty.reactionDelay
+            }
         }
     }
+}
 
-    // MARK: Comportements
+// MARK: - États
 
-    private func steer(toward point: CGPoint) {
-        bot.applyMovement((point - bot.position).normalized())
+/// Base commune : begin() à l'entrée, tick() chaque frame.
+class BotState: GKState {
+    unowned let brain: BotBrain
+    var bot: Character { brain.bot }
+
+    init(brain: BotBrain) {
+        self.brain = brain
+        super.init()
     }
 
-    private func steer(away from: CGPoint) {
-        bot.applyMovement((bot.position - from).normalized())
+    func begin() {}
+    func tick(dt: TimeInterval) {}
+
+    /// Steering simple : vecteur normalisé vers un point (SPEC §3, pas de pathfinding).
+    func direction(to point: CGPoint) -> CGVector {
+        CGVector(from: bot.position, to: point).normalized
+    }
+}
+
+/// Immobile, scanne. Très court, transitoire au spawn.
+final class BotIdleState: BotState {
+    private var remaining: TimeInterval = 0
+
+    override func begin() {
+        remaining = .random(in: 0.2...0.6)
+        bot.moveIntent = .zero
+        bot.aimIntent = nil
     }
 
-    private func wander(now: TimeInterval) {
-        let reached = wanderTarget.map { bot.position.distance(to: $0) < 40 } ?? true
-        if wanderTarget == nil || reached || now > wanderRetime {
-            wanderTarget = world.randomPointInZone()
-            wanderRetime = now + Double.random(in: 2...4)
+    override func tick(dt: TimeInterval) {
+        remaining -= dt
+        if brain.visibleTarget != nil {
+            brain.enter(BotChaseState.self)
+        } else if remaining <= 0 {
+            brain.enter(BotWanderState.self)
         }
-        if let t = wanderTarget { steer(toward: t) }
+    }
+}
+
+/// Se déplace vers un point aléatoire dans la zone safe, cherche une cible en route.
+final class BotWanderState: BotState {
+    private var destination: CGPoint = .zero
+    private var repickTimer: TimeInterval = 0
+
+    override func begin() {
+        pickDestination()
+        bot.aimIntent = nil
     }
 
-    private func attack(target: Character, now: TimeInterval) {
-        let to = target.position - bot.position
-        let dir = to.normalized()
-        let d = to.length
-        let engage = difficulty.engageDistance
+    private func pickDestination() {
+        destination = brain.world.zone.randomSafePoint()
+        repickTimer = .random(in: 3.5...6)
+    }
 
-        // Maintien d'une distance d'engagement + strafe latéral (SPEC §7.2).
-        var radial: CGFloat = 0
-        if d > engage * 1.05 { radial = 0.6 } else if d < engage * 0.8 { radial = -0.7 }
-        if now > strafeFlip { strafeDir *= -1; strafeFlip = now + Double.random(in: 1...2) }
-        let perp = CGVector(dx: -dir.dy, dy: dir.dx) * (strafeDir * 0.7)
-        bot.applyMovement((dir * radial) + perp)
+    override func tick(dt: TimeInterval) {
+        if brain.visibleTarget != nil {
+            brain.enter(BotChaseState.self)
+            return
+        }
+        repickTimer -= dt
+        if bot.position.distance(to: destination) < 25 || repickTimer <= 0 {
+            pickDestination()
+        }
+        bot.moveIntent = direction(to: destination) * 0.85
+    }
+}
 
-        bot.face(direction: dir)
+/// Cible connue mais hors de portée de tir : avance pour entrer à portée.
+final class BotChaseState: BotState {
+    override func begin() {
+        bot.aimIntent = nil
+    }
 
-        // Tir avec aimError gaussien (le levier de crédibilité, SPEC §7.4).
-        let err = RandomMath.gaussian(mean: 0, sd: difficulty.aimErrorDegrees * .pi / 180)
-        world.fire(from: bot, direction: CGVector(angle: dir.angle + err), now: now)
+    override func tick(dt: TimeInterval) {
+        if let target = brain.visibleTarget {
+            let dist = bot.position.distance(to: target.position)
+            if dist <= brain.difficulty.aggression,
+               brain.world.lineOfSightClear(from: bot.position, to: target.position) {
+                brain.enter(BotAttackState.self)
+                return
+            }
+            bot.moveIntent = direction(to: target.position)
+        } else if let memory = brain.lastKnownPosition {
+            // Mémoire : file vers la dernière position connue (SPEC §7.1).
+            if bot.position.distance(to: memory) < 20 {
+                bot.moveIntent = .zero
+            } else {
+                bot.moveIntent = direction(to: memory)
+            }
+        } else {
+            brain.enter(BotWanderState.self)
+        }
+    }
+}
+
+/// À portée + ligne de vue : strafe en tirant avec aimError, maintient ~250 pt.
+final class BotAttackState: BotState {
+    private var strafeSign: CGFloat = 1
+    private var strafeFlipTimer: TimeInterval = 0
+
+    override func begin() {
+        strafeSign = Bool.random() ? 1 : -1
+        strafeFlipTimer = .random(in: 0.8...1.6)
+    }
+
+    override func tick(dt: TimeInterval) {
+        guard let target = brain.visibleTarget else {
+            brain.enter(BotChaseState.self)
+            return
+        }
+        let dist = bot.position.distance(to: target.position)
+        if dist > brain.difficulty.aggression
+            || !brain.world.lineOfSightClear(from: bot.position, to: target.position) {
+            bot.aimIntent = nil
+            brain.enter(BotChaseState.self)
+            return
+        }
+
+        // Strafe latéral + correction radiale vers la distance d'engagement optimale.
+        strafeFlipTimer -= dt
+        if strafeFlipTimer <= 0 {
+            strafeSign *= -1
+            strafeFlipTimer = .random(in: 0.8...1.6)
+        }
+        let toTarget = direction(to: target.position)
+        let radialAmount = min(max((dist - GameConfig.engageDistance) / 120, -1), 1)
+        let movement = toTarget * radialAmount + toTarget.perpendicular * (strafeSign * 0.8)
+        bot.moveIntent = movement.normalized * 0.9
+
+        // Tir avec bruit gaussien sur l'angle (SPEC §7.4).
+        let aimAngle = toTarget.angle + gaussianRandom(stdDev: brain.aimErrorRadians)
+        bot.aimIntent = CGVector(angle: aimAngle)
+    }
+}
+
+/// PV bas : s'éloigne de la menace, vise un buisson pour se cacher.
+final class BotFleeState: BotState {
+    override func begin() {
+        bot.aimIntent = nil
+    }
+
+    override func tick(dt: TimeInterval) {
+        guard let threatPoint = brain.visibleTarget?.position ?? brain.lastKnownPosition else {
+            brain.enter(BotWanderState.self)
+            return
+        }
+        let distToThreat = bot.position.distance(to: threatPoint)
+        if distToThreat > GameConfig.fleeSafeDistance {
+            brain.enter(BotWanderState.self)
+            return
+        }
+
+        // Déjà caché et pas révélé : rester immobile, la menace ne nous voit plus.
+        if bot.isConcealed {
+            bot.moveIntent = .zero
+            return
+        }
+
+        let away = CGVector(from: threatPoint, to: bot.position).normalized
+        // Si un buisson est accessible dans la zone safe, s'y réfugier.
+        if let bush = brain.world.bushSystem.nearestBush(to: bot.position),
+           bush.center.distance(to: bot.position) < 350,
+           !brain.world.zone.isOutside(bush.center),
+           CGVector(from: bot.position, to: bush.center).normalized.dx * away.dx
+             + CGVector(from: bot.position, to: bush.center).normalized.dy * away.dy > -0.3 {
+            bot.moveIntent = direction(to: bush.center)
+        } else {
+            bot.moveIntent = away
+        }
+    }
+}
+
+/// Priorité absolue : hors zone ou zone en fermeture proche → rejoindre le centre.
+final class BotAvoidZoneState: BotState {
+    override func begin() {
+        // Interrompt tout combat (SPEC §7.2).
+        bot.aimIntent = nil
+    }
+
+    override func tick(dt: TimeInterval) {
+        let zone = brain.world.zone
+        let safeEnough = !zone.isInDanger(bot.position)
+            && zone.distanceToEdge(from: bot.position) > GameConfig.zoneEdgeMargin * 1.5
+        if safeEnough {
+            brain.enter(BotWanderState.self)
+            return
+        }
+        bot.moveIntent = direction(to: zone.center)
+    }
+}
+
+/// Désactivé, retiré de la logique.
+final class BotDeadState: BotState {
+    override func begin() {
+        bot.moveIntent = .zero
+        bot.aimIntent = nil
     }
 }

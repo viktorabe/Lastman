@@ -2,54 +2,101 @@
 //  BushSystem.swift
 //  Lastman
 //
-//  Occlusion / révélation des buissons (SPEC §6.3). Détection géométrique
-//  simple (cercles statiques) — pas de physics sensor nécessaire.
+//  Buissons : occlusion et révélation (SPEC §6.3). Pas de collision physique,
+//  détection géométrique de chevauchement (ellipses).
 //
 
 import SpriteKit
 
+struct Bush {
+    let id: Int
+    let center: CGPoint
+    let radii: CGSize      // demi-axes de l'ellipse
+
+    func contains(_ point: CGPoint) -> Bool {
+        let dx = (point.x - center.x) / radii.width
+        let dy = (point.y - center.y) / radii.height
+        return dx * dx + dy * dy <= 1
+    }
+}
+
 final class BushSystem {
 
-    private struct Bush { let center: CGPoint; let radius: CGFloat }
-    private var bushes: [Bush] = []
+    private(set) var bushes: [Bush] = []
 
-    /// Place les buissons dans la scène et mémorise leur géométrie.
-    func build(in scene: SKScene, layout: [(CGPoint, CGFloat)]) {
-        for (center, radius) in layout {
-            bushes.append(Bush(center: center, radius: radius))
-            let node = SKShapeNode(circleOfRadius: radius)
-            node.position = center
-            node.fillColor = SKColor(red: 0.25, green: 0.5, blue: 0.3, alpha: 0.35)
-            node.strokeColor = SKColor(red: 0.4, green: 0.7, blue: 0.45, alpha: 0.4)
-            node.lineWidth = 2
-            node.zPosition = 50          // au-dessus des persos pour l'effet de couvert
-            scene.addChild(node)
+    init(layout: [(center: CGPoint, radii: CGSize)], parent: SKNode) {
+        for (index, spec) in layout.enumerated() {
+            bushes.append(Bush(id: index, center: spec.center, radii: spec.radii))
+            parent.addChild(makeBushNode(center: spec.center, radii: spec.radii))
         }
     }
 
-    private func bushIndex(at p: CGPoint) -> Int? {
-        bushes.firstIndex { p.distance(to: $0.center) < $0.radius }
+    /// Formes douces semi-transparentes, dessinées AU-DESSUS des personnages
+    /// pour que quelqu'un dedans apparaisse sous le feuillage.
+    private func makeBushNode(center: CGPoint, radii: CGSize) -> SKNode {
+        let container = SKNode()
+        container.position = center
+        container.zPosition = 20
+
+        let outer = SKShapeNode(ellipseOf: CGSize(width: radii.width * 2, height: radii.height * 2))
+        outer.fillColor = SKColor(white: 1, alpha: 0.10)
+        outer.strokeColor = SKColor(white: 1, alpha: 0.30)
+        outer.lineWidth = 1.5
+
+        let inner = SKShapeNode(ellipseOf: CGSize(width: radii.width * 1.2, height: radii.height * 1.2))
+        inner.fillColor = SKColor(white: 1, alpha: 0.07)
+        inner.strokeColor = SKColor(white: 1, alpha: 0.15)
+        inner.lineWidth = 1
+
+        container.addChild(outer)
+        container.addChild(inner)
+        return container
     }
 
-    /// Recalcule, pour chaque personnage vivant, son état caché/révélé + alpha.
-    /// À appeler avant la perception des bots.
-    func update(characters: [Character], now: TimeInterval) {
-        for c in characters where c.isAlive {
-            guard let bi = bushIndex(at: c.position) else {
-                c.applyBushAlpha(hidden: false)
+    func bushID(at point: CGPoint) -> Int? {
+        bushes.first { $0.contains(point) }?.id
+    }
+
+    func nearestBush(to point: CGPoint) -> Bush? {
+        bushes.min { $0.center.distance(to: point) < $1.center.distance(to: point) }
+    }
+
+    // MARK: - Boucle
+
+    func update(characters: [Character], currentTime: TimeInterval) {
+        let alive = characters.filter { $0.isAlive }
+
+        for character in alive {
+            character.currentBushID = bushID(at: character.position)
+        }
+
+        for character in alive {
+            guard character.currentBushID != nil else {
+                character.isRevealed = true
                 continue
             }
-            // Révélé s'il a tiré récemment, ou si un ennemi est dans le même
-            // buisson / sous la distance seuil.
-            var revealed = now < c.revealedUntil
+            // Révélé s'il a tiré récemment…
+            var revealed = (currentTime - character.lastShotTime) < GameConfig.bushRevealAfterShot
+            // …ou si un ennemi est dans le même buisson / trop proche (SPEC §6.3).
             if !revealed {
-                for other in characters where other !== c && other.isAlive {
-                    let close = other.position.distance(to: c.position) < GameConfig.bushRevealDistance
-                    let sameBush = bushIndex(at: other.position) == bi
-                    if close || sameBush { revealed = true; break }
+                for other in alive where other !== character {
+                    if other.currentBushID == character.currentBushID
+                        || other.position.distance(to: character.position) < GameConfig.bushRevealDistance {
+                        revealed = true
+                        break
+                    }
                 }
             }
-            c.applyBushAlpha(hidden: !revealed)
+            character.isRevealed = revealed
         }
+
+        for character in alive {
+            character.updateConcealmentVisual()
+        }
+    }
+
+    /// Perception bot : une cible cachée non révélée n'existe pas (SPEC §7.1).
+    func canPerceive(_ target: Character) -> Bool {
+        !target.isConcealed
     }
 }

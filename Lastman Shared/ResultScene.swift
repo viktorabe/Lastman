@@ -2,62 +2,70 @@
 //  ResultScene.swift
 //  Lastman
 //
-//  Écran de fin (SPEC §5) : Victoire / Défaite + rang + Rejouer / Menu.
+//  Victoire / Défaite avec rang, Rejouer / Menu (SPEC §5).
 //
 
 import SpriteKit
 
 final class ResultScene: SKScene {
 
-    private var victory = false
-    private var rank = 1
-    private var total = 1
+    private let victory: Bool
+    private let rank: Int
+    private let total: Int
 
-    static func make(victory: Bool, rank: Int, total: Int, size: CGSize) -> ResultScene {
-        let scene = ResultScene(size: size)
-        scene.scaleMode = .resizeFill
-        scene.victory = victory
-        scene.rank = rank
-        scene.total = total
-        return scene
+    init(size: CGSize, victory: Bool, rank: Int, total: Int) {
+        self.victory = victory
+        self.rank = rank
+        self.total = total
+        super.init(size: size)
+        scaleMode = .resizeFill
+        anchorPoint = CGPoint(x: 0.5, y: 0.5)
+    }
+
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
     }
 
     override func didMove(to view: SKView) {
-        size = view.bounds.size
-        anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        backgroundColor = SKColor(white: 0.05, alpha: 1.0)
+        backgroundColor = SKColor(white: 0.04, alpha: 1)
 
-        let headline = SKLabelNode(fontNamed: "AvenirNext-Heavy")
-        headline.text = victory ? "VICTOIRE" : "DÉFAITE"
-        headline.fontSize = 60
-        headline.fontColor = victory ? SKColor(red: 0.4, green: 1, blue: 0.6, alpha: 1) : SKColor(red: 1, green: 0.4, blue: 0.4, alpha: 1)
-        headline.position = CGPoint(x: 0, y: size.height * 0.22)
-        addChild(headline)
+        let titleColor: SKColor = victory
+            ? SKColor(red: 0.35, green: 0.82, blue: 1.0, alpha: 1)
+            : SKColor(red: 0.95, green: 0.3, blue: 0.3, alpha: 1)
+        let title = makeLabel(victory ? "VICTOIRE" : "DÉFAITE", size: 46, color: titleColor, font: UIFont2.heavy)
+        title.position = CGPoint(x: 0, y: size.height * 0.2)
+        title.setScale(0.3)
+        title.alpha = 0
+        addChild(title)
+        title.run(.group([
+            .scale(to: 1, duration: 0.35),
+            .fadeIn(withDuration: 0.25),
+        ]))
 
-        let rankLabel = SKLabelNode(fontNamed: "AvenirNext-Bold")
-        rankLabel.text = "Rang  #\(rank) / \(total)"
-        rankLabel.fontSize = 30
-        rankLabel.fontColor = .white
-        rankLabel.position = CGPoint(x: 0, y: size.height * 0.22 - 70)
+        let rankLabel = makeLabel("#\(rank) sur \(total)", size: 26, font: UIFont2.bold)
+        rankLabel.position = CGPoint(x: 0, y: size.height * 0.2 - 54)
         addChild(rankLabel)
 
-        addChild(UIHelpers.button(text: "REJOUER", name: "replay", at: CGPoint(x: 0, y: 30),
-                                  color: Player.signature))
-        addChild(UIHelpers.button(text: "MENU", name: "menu", at: CGPoint(x: 0, y: -70),
-                                  color: SKColor(white: 1, alpha: 0.85)))
-    }
+        let subtitle = makeLabel(victory ? "Dernier debout." : "Un bot a été plus malin.", size: 16,
+                                 color: SKColor(white: 1, alpha: 0.5))
+        subtitle.position = CGPoint(x: 0, y: size.height * 0.2 - 92)
+        addChild(subtitle)
 
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let t = touches.first,
-              let name = UIHelpers.tappedName(at: t.location(in: self), in: self) else { return }
-        switch name {
-        case "replay":
-            view?.presentScene(GameScene(size: size, difficulty: GameSettings.difficulty,
-                                         botCount: GameSettings.botCount),
-                               transition: .doorway(withDuration: 0.6))
-        case "menu":
-            view?.presentScene(MenuScene.make(size: size), transition: .crossFade(withDuration: 0.4))
-        default: break
+        let replay = MenuButton(text: "REJOUER") { [weak self] in
+            guard let self, let view = self.view else { return }
+            let game = GameScene(size: self.size,
+                                 difficulty: GameSettings.difficulty,
+                                 botCount: GameSettings.botCount)
+            view.presentScene(game, transition: .fade(withDuration: 0.4))
         }
+        replay.position = CGPoint(x: 0, y: -40)
+        addChild(replay)
+
+        let menu = MenuButton(text: "MENU") { [weak self] in
+            guard let self, let view = self.view else { return }
+            view.presentScene(MenuScene.make(size: self.size), transition: .fade(withDuration: 0.3))
+        }
+        menu.position = CGPoint(x: 0, y: -114)
+        addChild(menu)
     }
 }

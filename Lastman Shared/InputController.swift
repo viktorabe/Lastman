@@ -2,57 +2,92 @@
 //  InputController.swift
 //  Lastman
 //
-//  Deux joysticks virtuels flottants → intents (SPEC §4, §9).
-//  Gauche (moitié gauche de l'écran) = déplacement.
-//  Droit (moitié droite) = visée + auto-fire tant qu'il est tenu.
+//  Deux joysticks flottants → intents (move vec, aim vec). SPEC §4 :
+//  gauche = déplacement analogique, droit = visée + auto-fire tant que tenu.
 //
 
 import SpriteKit
 
 final class InputController {
 
-    let moveJoystick = Joystick()
-    let aimJoystick = Joystick()
+    let moveStick = VirtualJoystick()
+    let aimStick = VirtualJoystick()
 
-    private(set) var enabled = true
-
-    var moveVector: CGVector { enabled ? moveJoystick.vector : .zero }
-    var aimVector: CGVector { enabled ? aimJoystick.vector : .zero }
-    var isFiring: Bool { enabled && aimJoystick.vector.length > 0.001 }
-
-    func attach(to camera: SKCameraNode) {
-        camera.addChild(moveJoystick)
-        camera.addChild(aimJoystick)
-    }
-
-    func setEnabled(_ value: Bool) {
-        enabled = value
-        if !value { moveJoystick.end(); aimJoystick.end() }
-    }
-
-    func touchesBegan(_ touches: Set<UITouch>, in camera: SKCameraNode) {
-        guard enabled else { return }
-        for t in touches {
-            let p = t.location(in: camera)
-            if p.x < 0 {
-                if moveJoystick.trackedTouch == nil { moveJoystick.begin(at: p, touch: t) }
-            } else {
-                if aimJoystick.trackedTouch == nil { aimJoystick.begin(at: p, touch: t) }
+    /// Bloqué pendant le countdown (SPEC §5).
+    var isEnabled = false {
+        didSet {
+            if !isEnabled {
+                releaseAll()
             }
         }
     }
 
-    func touchesMoved(_ touches: Set<UITouch>, in camera: SKCameraNode) {
-        for t in touches {
-            if t == moveJoystick.trackedTouch { moveJoystick.move(to: t.location(in: camera)) }
-            if t == aimJoystick.trackedTouch { aimJoystick.move(to: t.location(in: camera)) }
+    /// Couche HUD (enfant de la caméra) dans laquelle vivent les joysticks.
+    private unowned let hud: SKNode
+    private let screenSize: CGSize
+
+    private var moveTouch: UITouch?
+    private var aimTouch: UITouch?
+
+    var moveVector: CGVector { moveStick.value }
+    var aimVector: CGVector { aimStick.value.normalized }
+    /// Le joystick droit tenu et poussé = auto-fire (pas de bouton séparé).
+    var isAiming: Bool { aimTouch != nil && aimStick.value.length > 0.2 }
+
+    init(hud: SKNode, screenSize: CGSize) {
+        self.hud = hud
+        self.screenSize = screenSize
+        moveStick.zPosition = 100
+        aimStick.zPosition = 100
+        hud.addChild(moveStick)
+        hud.addChild(aimStick)
+    }
+
+    // MARK: - Touches (transmis par GameScene ; coordonnées HUD, origine au centre de l'écran)
+
+    func touchesBegan(_ touches: Set<UITouch>) {
+        guard isEnabled else { return }
+        for touch in touches {
+            let p = touch.location(in: hud)
+            // Zones flottantes : moitié inférieure, gauche/droite du centre.
+            guard p.y < screenSize.height * 0.15 else { continue }
+            if p.x < 0, moveTouch == nil {
+                moveTouch = touch
+                moveStick.activate(at: p)
+            } else if p.x >= 0, aimTouch == nil {
+                aimTouch = touch
+                aimStick.activate(at: p)
+            }
+        }
+    }
+
+    func touchesMoved(_ touches: Set<UITouch>) {
+        for touch in touches {
+            let p = touch.location(in: hud)
+            if touch === moveTouch {
+                moveStick.move(to: p)
+            } else if touch === aimTouch {
+                aimStick.move(to: p)
+            }
         }
     }
 
     func touchesEnded(_ touches: Set<UITouch>) {
-        for t in touches {
-            if t == moveJoystick.trackedTouch { moveJoystick.end() }
-            if t == aimJoystick.trackedTouch { aimJoystick.end() }
+        for touch in touches {
+            if touch === moveTouch {
+                moveTouch = nil
+                moveStick.deactivate()
+            } else if touch === aimTouch {
+                aimTouch = nil
+                aimStick.deactivate()
+            }
         }
+    }
+
+    private func releaseAll() {
+        moveTouch = nil
+        aimTouch = nil
+        moveStick.deactivate()
+        aimStick.deactivate()
     }
 }

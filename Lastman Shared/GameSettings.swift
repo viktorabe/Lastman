@@ -2,37 +2,36 @@
 //  GameSettings.swift
 //  Lastman
 //
-//  Réglages persistés (UserDefaults) : difficulté + nombre de bots (SPEC §5).
+//  Réglages persistés localement (SPEC §5 : UserDefaults).
 //
 
 import Foundation
 
 enum GameSettings {
-
-    private static let kDifficulty = "settings.difficulty"
-    private static let kBotCount = "settings.botCount"
-    private static let kBotCountSet = "settings.botCountSet"
+    private static let difficultyKey = "lastman.difficulty"
+    private static let botCountKey = "lastman.botCount"
 
     static var difficulty: Difficulty {
-        // `integer(forKey:)` renvoie 0 (= .easy) si la clé est absente : on teste
-        // donc l'existence pour conserver Moyen comme défaut.
         get {
-            guard UserDefaults.standard.object(forKey: kDifficulty) != nil else { return .medium }
-            return Difficulty(rawValue: UserDefaults.standard.integer(forKey: kDifficulty)) ?? .medium
-        }
-        set { UserDefaults.standard.set(newValue.rawValue, forKey: kDifficulty) }
-    }
-
-    /// Nombre de bots. Si jamais réglé par le joueur, suit le défaut de la difficulté.
-    static var botCount: Int {
-        get {
-            let d = UserDefaults.standard
-            return d.bool(forKey: kBotCountSet) ? d.integer(forKey: kBotCount) : difficulty.defaultBotCount
+            guard UserDefaults.standard.object(forKey: difficultyKey) != nil else { return .medium }
+            return Difficulty(rawValue: UserDefaults.standard.integer(forKey: difficultyKey)) ?? .medium
         }
         set {
-            let d = UserDefaults.standard
-            d.set(min(max(newValue, 1), 10), forKey: kBotCount)
-            d.set(true, forKey: kBotCountSet)
+            UserDefaults.standard.set(newValue.rawValue, forKey: difficultyKey)
+        }
+    }
+
+    static var botCount: Int {
+        get {
+            guard UserDefaults.standard.object(forKey: botCountKey) != nil else {
+                return GameConfig.defaultBotCount
+            }
+            let stored = UserDefaults.standard.integer(forKey: botCountKey)
+            return min(max(stored, GameConfig.botCountRange.lowerBound), GameConfig.botCountRange.upperBound)
+        }
+        set {
+            let clamped = min(max(newValue, GameConfig.botCountRange.lowerBound), GameConfig.botCountRange.upperBound)
+            UserDefaults.standard.set(clamped, forKey: botCountKey)
         }
     }
 }

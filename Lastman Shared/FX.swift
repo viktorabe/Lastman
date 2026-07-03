@@ -2,59 +2,105 @@
 //  FX.swift
 //  Lastman
 //
-//  Juice (SPEC §8) : muzzle flash, étincelles d'impact, poof de mort.
-//  Particules « maison » (petits SKShapeNode animés) pour rester sans assets.
-//  Le screen shake est géré par GameScene (offset caméra).
+//  Le juice (SPEC §8) : muzzle flash, étincelles d'impact, poof de mort.
+//  Emitters construits en code (pas de .sks), texture particule générée.
 //
 
 import SpriteKit
 
 enum FX {
 
-    static func muzzleFlash(at point: CGPoint, in scene: SKScene) {
-        let flash = SKShapeNode(circleOfRadius: 9)
+    /// Petite texture ronde blanche partagée par tous les emitters.
+    static let particleTexture: SKTexture = {
+        let size = CGSize(width: 8, height: 8)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        let image = renderer.image { ctx in
+            ctx.cgContext.setFillColor(UIColor.white.cgColor)
+            ctx.cgContext.fillEllipse(in: CGRect(origin: .zero, size: size))
+        }
+        return SKTexture(image: image)
+    }()
+
+    // MARK: - Muzzle flash
+
+    static func muzzleFlash(at point: CGPoint, angle: CGFloat, in parent: SKNode) {
+        let flash = SKShapeNode(circleOfRadius: 5)
         flash.position = point
-        flash.fillColor = SKColor(white: 1, alpha: 0.9)
+        flash.zRotation = angle
+        flash.fillColor = .white
         flash.strokeColor = .clear
-        flash.zPosition = 9
-        flash.setScale(0.4)
-        scene.addChild(flash)
+        flash.zPosition = 16
+        flash.xScale = 1.6
+        parent.addChild(flash)
         flash.run(.sequence([
-            .group([.scale(to: 1.2, duration: 0.08), .fadeOut(withDuration: 0.08)]),
+            .group([
+                .scale(to: 0.2, duration: 0.09),
+                .fadeOut(withDuration: 0.09),
+            ]),
             .removeFromParent(),
         ]))
     }
 
-    static func impactSparks(at point: CGPoint, in scene: SKScene) {
-        burst(at: point, count: 6, color: .white, speed: 90, size: 3, life: 0.25, in: scene)
+    // MARK: - Étincelles d'impact
+
+    static func impactSparks(at point: CGPoint, color: SKColor, in parent: SKNode, count: Int = 10) {
+        let emitter = SKEmitterNode()
+        emitter.particleTexture = particleTexture
+        emitter.position = point
+        emitter.zPosition = 30
+        emitter.numParticlesToEmit = count
+        emitter.particleBirthRate = 400
+        emitter.particleLifetime = 0.25
+        emitter.particleLifetimeRange = 0.1
+        emitter.particleSpeed = 150
+        emitter.particleSpeedRange = 80
+        emitter.emissionAngleRange = 2 * .pi
+        emitter.particleAlpha = 1
+        emitter.particleAlphaSpeed = -3.5
+        emitter.particleScale = 0.5
+        emitter.particleScaleSpeed = -1.5
+        emitter.particleColor = color
+        emitter.particleColorBlendFactor = 1
+        parent.addChild(emitter)
+        emitter.run(.sequence([.wait(forDuration: 0.6), .removeFromParent()]))
     }
 
-    static func deathPoof(at point: CGPoint, color: SKColor, in scene: SKScene) {
-        burst(at: point, count: 16, color: color, speed: 160, size: 5, life: 0.5, in: scene)
-        burst(at: point, count: 10, color: .white, speed: 110, size: 4, life: 0.45, in: scene)
-    }
+    // MARK: - Poof de mort
 
-    private static func burst(at point: CGPoint, count: Int, color: SKColor,
-                              speed: CGFloat, size: CGFloat, life: TimeInterval, in scene: SKScene) {
-        for _ in 0..<count {
-            let p = SKShapeNode(circleOfRadius: size)
-            p.position = point
-            p.fillColor = color
-            p.strokeColor = .clear
-            p.zPosition = 60
-            scene.addChild(p)
+    static func deathPoof(at point: CGPoint, color: SKColor, in parent: SKNode) {
+        let emitter = SKEmitterNode()
+        emitter.particleTexture = particleTexture
+        emitter.position = point
+        emitter.zPosition = 30
+        emitter.numParticlesToEmit = 24
+        emitter.particleBirthRate = 800
+        emitter.particleLifetime = 0.5
+        emitter.particleLifetimeRange = 0.25
+        emitter.particleSpeed = 120
+        emitter.particleSpeedRange = 70
+        emitter.emissionAngleRange = 2 * .pi
+        emitter.particleAlphaSpeed = -2
+        emitter.particleScale = 0.8
+        emitter.particleScaleSpeed = -1.2
+        emitter.particleColor = color
+        emitter.particleColorBlendFactor = 1
+        parent.addChild(emitter)
+        emitter.run(.sequence([.wait(forDuration: 1.0), .removeFromParent()]))
 
-            let angle = CGFloat.random(in: 0...(2 * .pi))
-            let dist = speed * CGFloat(life) * CGFloat.random(in: 0.4...1.0)
-            let dest = point + CGVector(angle: angle) * dist
-            p.run(.sequence([
-                .group([
-                    .move(to: dest, duration: life),
-                    .fadeOut(withDuration: life),
-                    .scale(to: 0.2, duration: life),
-                ]),
-                .removeFromParent(),
-            ]))
-        }
+        // Anneau qui s'étend, façon onde de choc.
+        let ring = SKShapeNode(circleOfRadius: 8)
+        ring.position = point
+        ring.strokeColor = color
+        ring.lineWidth = 2.5
+        ring.fillColor = .clear
+        ring.zPosition = 30
+        parent.addChild(ring)
+        ring.run(.sequence([
+            .group([
+                .scale(to: 4, duration: 0.35),
+                .fadeOut(withDuration: 0.35),
+            ]),
+            .removeFromParent(),
+        ]))
     }
 }

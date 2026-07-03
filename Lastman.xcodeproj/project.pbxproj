@@ -16,7 +16,6 @@
 			membershipExceptions = (
 				Actions.sks,
 				Assets.xcassets,
-				Bot.swift,
 				BotBrain.swift,
 				BushSystem.swift,
 				Character.swift,
@@ -26,6 +25,7 @@
 				GameScene.sks,
 				GameScene.swift,
 				GameSettings.swift,
+				GameState.swift,
 				InputController.swift,
 				Joystick.swift,
 				MathHelpers.swift,

@@ -2,7 +2,7 @@
 //  MenuScene.swift
 //  Lastman
 //
-//  Écran titre (SPEC §5) : Jouer / Réglages.
+//  Écran titre : Jouer / Réglages (SPEC §5).
 //
 
 import SpriteKit
@@ -12,43 +12,54 @@ final class MenuScene: SKScene {
     static func make(size: CGSize) -> MenuScene {
         let scene = MenuScene(size: size)
         scene.scaleMode = .resizeFill
+        scene.anchorPoint = CGPoint(x: 0.5, y: 0.5)
         return scene
     }
 
     override func didMove(to view: SKView) {
-        size = view.bounds.size
-        anchorPoint = CGPoint(x: 0.5, y: 0.5)
-        backgroundColor = SKColor(white: 0.05, alpha: 1.0)
+        backgroundColor = SKColor(white: 0.04, alpha: 1)
 
-        let title = SKLabelNode(fontNamed: "AvenirNext-Heavy")
-        title.text = "LASTMAN"
-        title.fontSize = 64
-        title.fontColor = .white
+        let title = makeLabel("LASTMAN", size: 52, font: UIFont2.heavy)
         title.position = CGPoint(x: 0, y: size.height * 0.22)
         addChild(title)
+        title.run(.repeatForever(.sequence([
+            .scale(to: 1.03, duration: 1.2),
+            .scale(to: 1.0, duration: 1.2),
+        ])))
 
-        let subtitle = SKLabelNode(fontNamed: "AvenirNext-Medium")
-        subtitle.text = "Battle Royale"
-        subtitle.fontSize = 22
-        subtitle.fontColor = SKColor(white: 1, alpha: 0.5)
-        subtitle.position = CGPoint(x: 0, y: size.height * 0.22 - 48)
+        let subtitle = makeLabel("Battle royale stickman · offline", size: 16,
+                                 color: SKColor(white: 1, alpha: 0.6))
+        subtitle.position = CGPoint(x: 0, y: size.height * 0.22 - 44)
         addChild(subtitle)
 
-        addChild(UIHelpers.button(text: "JOUER", name: "play", at: CGPoint(x: 0, y: 40),
-                                  color: Player.signature))
-        addChild(UIHelpers.button(text: "RÉGLAGES", name: "settings", at: CGPoint(x: 0, y: -60),
-                                  color: SKColor(white: 1, alpha: 0.85)))
+        let playButton = MenuButton(text: "JOUER") { [weak self] in
+            self?.startMatch()
+        }
+        playButton.position = CGPoint(x: 0, y: -20)
+        addChild(playButton)
+
+        let settingsButton = MenuButton(text: "RÉGLAGES") { [weak self] in
+            self?.openSettings()
+        }
+        settingsButton.position = CGPoint(x: 0, y: -94)
+        addChild(settingsButton)
+
+        let footer = makeLabel("\(GameSettings.botCount) bots · \(GameSettings.difficulty.label)", size: 14,
+                               color: SKColor(white: 1, alpha: 0.4))
+        footer.position = CGPoint(x: 0, y: -size.height / 2 + 40)
+        addChild(footer)
     }
 
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let t = touches.first else { return }
-        let tapped = nodes(at: t.location(in: self)).compactMap { $0.name }
-        if tapped.contains("play") {
-            view?.presentScene(GameScene(size: size, difficulty: GameSettings.difficulty,
-                                         botCount: GameSettings.botCount),
-                               transition: .doorway(withDuration: 0.6))
-        } else if tapped.contains("settings") {
-            view?.presentScene(SettingsScene.make(size: size), transition: .push(with: .left, duration: 0.4))
-        }
+    private func startMatch() {
+        guard let view else { return }
+        let game = GameScene(size: size,
+                             difficulty: GameSettings.difficulty,
+                             botCount: GameSettings.botCount)
+        view.presentScene(game, transition: .fade(withDuration: 0.4))
+    }
+
+    private func openSettings() {
+        guard let view else { return }
+        view.presentScene(SettingsScene.make(size: size), transition: .fade(withDuration: 0.3))
     }
 }

@@ -2,163 +2,260 @@
 //  Character.swift
 //  Lastman
 //
-//  Base commune au joueur et aux bots (SPEC §9). Porte les PV, le corps
-//  physique, la barre de vie, l'indicateur de visée et le déplacement avec
-//  easing. Le node est le rendu ; la logique (PV, état caché) vit ici.
+//  Entité de base joueur + bots : PV, node stickman, physics body, intents.
+//  Le state logique vit ici (source de vérité) ; le SKNode n'est que le rendu.
 //
 
 import SpriteKit
 
-class Character {
+/// Node porteur d'une référence vers l'entité, pour remonter du contact physique à la logique.
+final class CharacterNode: SKNode {
+    weak var entity: Character?
+}
 
-    let node: SKNode
+final class Character {
+
+    let displayName: String
     let isPlayer: Bool
     let color: SKColor
-    let maxHP: CGFloat
-    private(set) var hp: CGFloat
-    private(set) var isAlive = true
+    let node = CharacterNode()
 
-    /// PV courants en fraction du maximum (0...1).
-    var hpFraction: CGFloat { max(0, min(1, hp / maxHP)) }
-
-    /// Direction de visée / orientation courante.
-    var aimDirection = CGVector(dx: 0, dy: 1)
-
-    // Buissons (SPEC §6.3) — renseignés par BushSystem.
-    var revealedUntil: TimeInterval = 0
-    var isHiddenInBush = false
-
-    private let body: SKShapeNode
-    private let head: SKShapeNode
-    private let aimIndicator: SKShapeNode
-    private let healthBG: SKSpriteNode
-    private let healthFill: SKSpriteNode
-
+    private(set) var hp: CGFloat = GameConfig.maxHP
+    var isAlive: Bool { hp > 0 }
+    var hpFraction: CGFloat { max(0, hp / GameConfig.maxHP) }
     var position: CGPoint { node.position }
 
-    init(isPlayer: Bool, color: SKColor, position: CGPoint) {
+    /// Appelé une seule fois quand les PV tombent à 0. Branché par GameScene.
+    var onDeath: ((Character) -> Void)?
+
+    // MARK: Intents (remplis par PlayerController ou BotBrain, consommés par les systèmes)
+    var moveIntent: CGVector = .zero      // amplitude 0...1
+    var aimIntent: CGVector?              // direction de tir souhaitée, nil = ne tire pas
+    var fireCooldown: TimeInterval = 0
+
+    // MARK: État buisson (géré par BushSystem)
+    var currentBushID: Int?
+    var lastShotTime: TimeInterval = -10
+    var isRevealed = true
+    /// Caché au sens gameplay : dans un buisson et pas révélé (SPEC §6.3).
+    var isConcealed: Bool { currentBushID != nil && !isRevealed }
+
+    // MARK: Rendu
+    private let figure = SKNode()
+    private let leftLegPivot = SKNode()
+    private let rightLegPivot = SKNode()
+    private let aimIndicator = SKNode()
+    private var hpBarFill: SKShapeNode!
+    private var strokeNodes: [SKShapeNode] = []
+    private var isRunAnimActive = false
+
+    init(name: String, isPlayer: Bool, color: SKColor, position: CGPoint) {
+        self.displayName = name
         self.isPlayer = isPlayer
         self.color = color
-        self.maxHP = GameConfig.maxHP
-        self.hp = GameConfig.maxHP
-
-        let r = GameConfig.characterRadius
-        node = SKNode()
+        node.entity = self
         node.position = position
         node.zPosition = 10
-
-        // Indicateur de visée (petit trait dans la direction regardée).
-        aimIndicator = SKShapeNode(rectOf: CGSize(width: r * 1.2, height: 3), cornerRadius: 1.5)
-        aimIndicator.fillColor = SKColor(white: 1, alpha: 0.85)
-        aimIndicator.strokeColor = .clear
-        aimIndicator.position = CGPoint(x: r * 0.6, y: 0)
-        let aimPivot = SKNode()                 // pivot pour orienter le trait
-        aimPivot.addChild(aimIndicator)
-        node.addChild(aimPivot)
-        self.aimPivot = aimPivot
-
-        body = SKShapeNode(rectOf: CGSize(width: r * 0.5, height: r * 1.1), cornerRadius: r * 0.25)
-        body.position = CGPoint(x: 0, y: -r * 0.4)
-        body.fillColor = color
-        body.strokeColor = .clear
-        node.addChild(body)
-
-        head = SKShapeNode(circleOfRadius: r * 0.45)
-        head.position = CGPoint(x: 0, y: r * 0.45)
-        head.fillColor = .white
-        head.strokeColor = .clear
-        node.addChild(head)
-
-        // Barre de vie au-dessus de la tête.
-        let barW: CGFloat = 34, barH: CGFloat = 5
-        healthBG = SKSpriteNode(color: SKColor(white: 0, alpha: 0.6), size: CGSize(width: barW, height: barH))
-        healthBG.position = CGPoint(x: 0, y: r * 1.5)
-        node.addChild(healthBG)
-        healthFill = SKSpriteNode(color: .green, size: CGSize(width: barW, height: barH))
-        healthFill.anchorPoint = CGPoint(x: 0, y: 0.5)
-        healthFill.position = CGPoint(x: -barW / 2, y: r * 1.5)
-        node.addChild(healthFill)
-
-        let physics = SKPhysicsBody(circleOfRadius: r)
-        physics.affectedByGravity = false
-        physics.allowsRotation = false
-        physics.linearDamping = 0
-        physics.friction = 0
-        physics.restitution = 0
-        physics.categoryBitMask = isPlayer ? PhysicsCategory.player : PhysicsCategory.bot
-        physics.collisionBitMask = PhysicsCategory.wall
-        physics.contactTestBitMask = PhysicsCategory.none
-        node.physicsBody = physics
+        buildFigure()
+        buildHPBar()
+        buildPhysics()
     }
 
-    private let aimPivot: SKNode
+    // MARK: - Construction du stickman (trait fin, lisible petit — SPEC §8)
 
-    // MARK: Déplacement
-
-    /// Applique un vecteur d'entrée (amplitude 0...1) avec easing sur la vélocité.
-    func applyMovement(_ input: CGVector) {
-        guard isAlive, let physics = node.physicsBody else { return }
-        let v = input.clampedToUnit()
-        let target = v * GameConfig.playerSpeed
-        let s = GameConfig.moveSmoothing
-        physics.velocity = CGVector(
-            dx: physics.velocity.dx + (target.dx - physics.velocity.dx) * s,
-            dy: physics.velocity.dy + (target.dy - physics.velocity.dy) * s
-        )
-        if v.length > 0.05 { face(direction: v) }
+    private func line(from: CGPoint, to: CGPoint, width: CGFloat = 2.2) -> SKShapeNode {
+        let path = CGMutablePath()
+        path.move(to: from)
+        path.addLine(to: to)
+        let shape = SKShapeNode(path: path)
+        shape.strokeColor = color
+        shape.lineWidth = width
+        shape.lineCap = .round
+        return shape
     }
 
-    func face(direction: CGVector) {
-        guard direction.length > 0.001 else { return }
-        aimDirection = direction.normalized()
-        aimPivot.zRotation = aimDirection.angle
+    private func buildFigure() {
+        // Tête
+        let head = SKShapeNode(circleOfRadius: 5)
+        head.position = CGPoint(x: 0, y: 12)
+        head.strokeColor = color
+        head.lineWidth = 2.2
+        head.fillColor = .clear
+
+        // Tronc et bras
+        let torso = line(from: CGPoint(x: 0, y: 7), to: CGPoint(x: 0, y: -4))
+        let armL = line(from: CGPoint(x: 0, y: 4), to: CGPoint(x: -6, y: -1))
+        let armR = line(from: CGPoint(x: 0, y: 4), to: CGPoint(x: 6, y: -1))
+
+        // Jambes sur pivots pour l'animation de course
+        leftLegPivot.position = CGPoint(x: 0, y: -4)
+        rightLegPivot.position = CGPoint(x: 0, y: -4)
+        let legL = line(from: .zero, to: CGPoint(x: -4, y: -11))
+        let legR = line(from: .zero, to: CGPoint(x: 4, y: -11))
+        leftLegPivot.addChild(legL)
+        rightLegPivot.addChild(legR)
+
+        strokeNodes = [head, torso, armL, armR, legL, legR]
+
+        figure.addChild(torso)
+        figure.addChild(armL)
+        figure.addChild(armR)
+        figure.addChild(leftLegPivot)
+        figure.addChild(rightLegPivot)
+        figure.addChild(head)
+        node.addChild(figure)
+
+        // Indicateur de visée : petit canon qui pointe la direction de tir
+        let barrel = line(from: CGPoint(x: 10, y: 0), to: CGPoint(x: 20, y: 0), width: 2.6)
+        barrel.alpha = 0.9
+        aimIndicator.addChild(barrel)
+        node.addChild(aimIndicator)
     }
 
-    // MARK: Combat
+    private func buildHPBar() {
+        let barWidth: CGFloat = 28
+        let bg = SKShapeNode(rectOf: CGSize(width: barWidth, height: 4), cornerRadius: 2)
+        bg.position = CGPoint(x: 0, y: 24)
+        bg.fillColor = SKColor(white: 1, alpha: 0.15)
+        bg.strokeColor = .clear
+        node.addChild(bg)
 
-    /// Inflige des dégâts. Met à jour la barre + flash. La mort est détectée
-    /// par la GameScene (hp <= 0) pour centraliser le classement.
-    func takeDamage(_ amount: CGFloat) {
+        hpBarFill = SKShapeNode(rectOf: CGSize(width: barWidth, height: 4), cornerRadius: 2)
+        hpBarFill.position = .zero
+        hpBarFill.fillColor = color
+        hpBarFill.strokeColor = .clear
+        bg.addChild(hpBarFill)
+    }
+
+    private func buildPhysics() {
+        let body = SKPhysicsBody(circleOfRadius: GameConfig.characterRadius)
+        body.allowsRotation = false
+        body.linearDamping = 0
+        body.friction = 0
+        body.restitution = 0
+        body.categoryBitMask = isPlayer ? PhysicsCategory.player : PhysicsCategory.bot
+        body.collisionBitMask = PhysicsCategory.wall | PhysicsCategory.anyCharacter
+        body.contactTestBitMask = PhysicsCategory.none
+        node.physicsBody = body
+    }
+
+    // MARK: - Boucle
+
+    /// Applique le moveIntent au physics body. Réactif, léger easing (SPEC §6.1).
+    func applyMovement(dt: TimeInterval) {
+        guard isAlive, let body = node.physicsBody else { return }
+        let target = moveIntent * GameConfig.playerSpeed
+        body.velocity = body.velocity.lerped(to: target, t: GameConfig.velocityLerpRate * CGFloat(dt))
+
+        updateRunAnimation(speed: body.velocity.length)
+        updateFacing()
+    }
+
+    private func updateFacing() {
+        // Le canon suit la visée si on vise, sinon la direction de déplacement.
+        let dir = aimIntent ?? (moveIntent.length > 0.1 ? moveIntent : nil)
+        if let dir, dir.length > 0.05 {
+            aimIndicator.zRotation = dir.angle
+            aimIndicator.alpha = 0.9
+        }
+    }
+
+    private func updateRunAnimation(speed: CGFloat) {
+        let running = speed > 25
+        guard running != isRunAnimActive else { return }
+        isRunAnimActive = running
+
+        if running {
+            let swing: CGFloat = 0.55
+            let half = 0.14
+            let swingL = SKAction.repeatForever(.sequence([
+                .rotate(toAngle: swing, duration: half, shortestUnitArc: true),
+                .rotate(toAngle: -swing, duration: half, shortestUnitArc: true),
+            ]))
+            let swingR = SKAction.repeatForever(.sequence([
+                .rotate(toAngle: -swing, duration: half, shortestUnitArc: true),
+                .rotate(toAngle: swing, duration: half, shortestUnitArc: true),
+            ]))
+            leftLegPivot.run(swingL, withKey: "run")
+            rightLegPivot.run(swingR, withKey: "run")
+            let bob = SKAction.repeatForever(.sequence([
+                .moveBy(x: 0, y: 1.5, duration: half),
+                .moveBy(x: 0, y: -1.5, duration: half),
+            ]))
+            figure.run(bob, withKey: "bob")
+        } else {
+            leftLegPivot.removeAction(forKey: "run")
+            rightLegPivot.removeAction(forKey: "run")
+            figure.removeAction(forKey: "bob")
+            leftLegPivot.run(.rotate(toAngle: 0, duration: 0.1, shortestUnitArc: true))
+            rightLegPivot.run(.rotate(toAngle: 0, duration: 0.1, shortestUnitArc: true))
+            figure.run(.moveTo(y: 0, duration: 0.1))
+        }
+    }
+
+    // MARK: - Dégâts
+
+    func takeDamage(_ amount: CGFloat, withFX: Bool = true) {
         guard isAlive else { return }
         hp = max(0, hp - amount)
-        updateHealthBar()
-        flashHit()
+        updateHPBar()
+        if withFX { flashHit() }
+        if hp <= 0 { die() }
     }
 
-    private func updateHealthBar() {
-        let ratio = max(0, hp / maxHP)
-        healthFill.xScale = ratio
-        healthFill.color = ratio > 0.5 ? .green : (ratio > 0.25 ? .yellow : .red)
+    private func updateHPBar() {
+        let barWidth: CGFloat = 28
+        hpBarFill.xScale = hpFraction
+        hpBarFill.position = CGPoint(x: -barWidth * (1 - hpFraction) / 2, y: 0)
     }
 
+    /// Flash blanc sur le corps touché (SPEC §8).
     private func flashHit() {
-        let original = color
-        body.run(.sequence([
-            .run { [body] in body.fillColor = .white },
-            .wait(forDuration: 0.06),
-            .run { [body] in body.fillColor = original },
+        for shape in strokeNodes {
+            shape.strokeColor = .white
+        }
+        node.run(.sequence([
+            .wait(forDuration: 0.08),
+            .run { [weak self] in
+                guard let self else { return }
+                for shape in self.strokeNodes {
+                    shape.strokeColor = self.color
+                }
+            },
+        ]), withKey: "hitFlash")
+    }
+
+    private func die() {
+        node.physicsBody = nil
+        moveIntent = .zero
+        aimIntent = nil
+        leftLegPivot.removeAllActions()
+        rightLegPivot.removeAllActions()
+        figure.removeAllActions()
+        onDeath?(self)
+
+        // Animation de mort : petit sursaut puis fade (le poof est géré par FX).
+        node.run(.sequence([
+            .group([
+                .scale(to: 1.25, duration: 0.1),
+                .fadeAlpha(to: 0.6, duration: 0.1),
+            ]),
+            .group([
+                .scale(to: 0.4, duration: 0.3),
+                .fadeOut(withDuration: 0.3),
+            ]),
+            .removeFromParent(),
         ]))
     }
 
-    /// Désactive le personnage (mort). Le poof visuel est géré par FX côté scène.
-    func kill() {
+    /// Alpha vu à l'écran selon l'état caché (appelé par BushSystem).
+    func updateConcealmentVisual() {
         guard isAlive else { return }
-        isAlive = false
-        node.physicsBody = nil
-        healthBG.isHidden = true
-        healthFill.isHidden = true
-        node.run(.sequence([.fadeOut(withDuration: 0.3), .removeFromParent()]))
-    }
-
-    // MARK: Rendu buisson
-
-    /// Applique l'alpha d'occlusion. Le joueur se voit toujours normalement.
-    func applyBushAlpha(hidden: Bool) {
-        isHiddenInBush = hidden
         if isPlayer {
-            node.alpha = 1.0
+            // Le joueur se voit toujours normalement (SPEC §6.3).
+            node.alpha = 1
         } else {
-            node.alpha = hidden ? GameConfig.bushHiddenAlpha : 1.0
+            node.alpha = isConcealed ? GameConfig.bushHiddenAlpha : 1
         }
     }
 }

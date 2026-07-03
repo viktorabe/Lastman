@@ -2,27 +2,24 @@
 //  Player.swift
 //  Lastman
 //
-//  Stickman du joueur. Mappe les intents des deux joysticks (SPEC §9).
+//  PlayerController : mappe les intents des joysticks vers le personnage joueur.
 //
 
-import SpriteKit
+import Foundation
 
-final class Player: Character {
+final class PlayerController {
 
-    /// Couleur signature du joueur.
-    static let signature = SKColor(red: 0.3, green: 0.8, blue: 1.0, alpha: 1.0)
+    let character: Character
+    private let input: InputController
 
-    init(position: CGPoint) {
-        super.init(isPlayer: true, color: Player.signature, position: position)
+    init(character: Character, input: InputController) {
+        self.character = character
+        self.input = input
     }
 
-    /// Applique les entrées de la frame.
-    /// - move : joystick gauche (déplacement).
-    /// - aim : joystick droit (visée) ; oriente le stickman si poussé.
-    func apply(move: CGVector, aim: CGVector) {
-        applyMovement(move)
-        if aim.length > 0.001 {
-            face(direction: aim)
-        }
+    func update() {
+        guard character.isAlive else { return }
+        character.moveIntent = input.moveVector
+        character.aimIntent = input.isAiming ? input.aimVector : nil
     }
 }

@@ -2,48 +2,77 @@
 //  MathHelpers.swift
 //  Lastman
 //
-//  Petits helpers vectoriels (déplacement, visée, steering) et bruit gaussien
-//  (pour `aimError`, cf. SPEC §7.4).
+//  Petites extensions vecteurs/points + bruit gaussien pour l'aimError.
 //
 
 import CoreGraphics
 import Foundation
 
 extension CGVector {
-    var length: CGFloat { hypot(dx, dy) }
-    var angle: CGFloat { atan2(dy, dx) }
-
-    init(angle: CGFloat) { self.init(dx: cos(angle), dy: sin(angle)) }
-
-    func normalized() -> CGVector {
-        let l = length
-        return l > 0 ? CGVector(dx: dx / l, dy: dy / l) : .zero
+    init(from: CGPoint, to: CGPoint) {
+        self.init(dx: to.x - from.x, dy: to.y - from.y)
     }
 
-    /// Bornée à une longueur maximale de 1.
-    func clampedToUnit() -> CGVector {
-        let l = length
-        return l > 1 ? CGVector(dx: dx / l, dy: dy / l) : self
+    init(angle: CGFloat, length: CGFloat = 1) {
+        self.init(dx: cos(angle) * length, dy: sin(angle) * length)
     }
 
-    static func * (v: CGVector, s: CGFloat) -> CGVector { CGVector(dx: v.dx * s, dy: v.dy * s) }
-    static func + (a: CGVector, b: CGVector) -> CGVector { CGVector(dx: a.dx + b.dx, dy: a.dy + b.dy) }
-    static func - (a: CGVector, b: CGVector) -> CGVector { CGVector(dx: a.dx - b.dx, dy: a.dy - b.dy) }
+    var length: CGFloat {
+        sqrt(dx * dx + dy * dy)
+    }
+
+    var angle: CGFloat {
+        atan2(dy, dx)
+    }
+
+    var normalized: CGVector {
+        let l = length
+        guard l > 0.0001 else { return .zero }
+        return CGVector(dx: dx / l, dy: dy / l)
+    }
+
+    /// Vecteur perpendiculaire (rotation de +90°).
+    var perpendicular: CGVector {
+        CGVector(dx: -dy, dy: dx)
+    }
+
+    static func + (a: CGVector, b: CGVector) -> CGVector {
+        CGVector(dx: a.dx + b.dx, dy: a.dy + b.dy)
+    }
+
+    static func - (a: CGVector, b: CGVector) -> CGVector {
+        CGVector(dx: a.dx - b.dx, dy: a.dy - b.dy)
+    }
+
+    static func * (v: CGVector, s: CGFloat) -> CGVector {
+        CGVector(dx: v.dx * s, dy: v.dy * s)
+    }
+
+    /// Interpolation linéaire vers `target` (t clampé à [0, 1]).
+    func lerped(to target: CGVector, t: CGFloat) -> CGVector {
+        let k = min(max(t, 0), 1)
+        return CGVector(dx: dx + (target.dx - dx) * k, dy: dy + (target.dy - dy) * k)
+    }
 }
 
 extension CGPoint {
-    static func - (a: CGPoint, b: CGPoint) -> CGVector { CGVector(dx: a.x - b.x, dy: a.y - b.y) }
-    static func + (p: CGPoint, v: CGVector) -> CGPoint { CGPoint(x: p.x + v.dx, y: p.y + v.dy) }
+    func distance(to other: CGPoint) -> CGFloat {
+        hypot(other.x - x, other.y - y)
+    }
 
-    func distance(to p: CGPoint) -> CGFloat { hypot(p.x - x, p.y - y) }
+    static func + (p: CGPoint, v: CGVector) -> CGPoint {
+        CGPoint(x: p.x + v.dx, y: p.y + v.dy)
+    }
 }
 
-enum RandomMath {
-    /// Bruit gaussien (Box-Muller). Sert à brouiller l'angle de tir des bots.
-    static func gaussian(mean: CGFloat = 0, sd: CGFloat = 1) -> CGFloat {
-        let u1 = max(CGFloat.random(in: 0...1), 1e-9)
-        let u2 = CGFloat.random(in: 0...1)
-        let z = sqrt(-2 * log(u1)) * cos(2 * .pi * u2)
-        return mean + z * sd
-    }
+/// Bruit gaussien (Box-Muller). Utilisé pour l'aimError des bots (SPEC §7.4).
+func gaussianRandom(mean: CGFloat = 0, stdDev: CGFloat = 1) -> CGFloat {
+    let u1 = CGFloat.random(in: 0.0001...1)
+    let u2 = CGFloat.random(in: 0...1)
+    let z = sqrt(-2 * log(u1)) * cos(2 * .pi * u2)
+    return mean + z * stdDev
+}
+
+extension CGFloat {
+    var degreesToRadians: CGFloat { self * .pi / 180 }
 }

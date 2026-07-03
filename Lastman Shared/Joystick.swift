@@ -2,81 +2,63 @@
 //  Joystick.swift
 //  Lastman
 //
-//  Joystick virtuel flottant (SPEC §4) : analogique, 360°, vitesse
-//  proportionnelle à l'amplitude. Le node est attaché à la caméra et déplacé
-//  là où le pouce se pose. `vector` renvoie un déplacement normalisé clampé à 1.
+//  Joystick virtuel flottant : apparaît là où le pouce se pose (SPEC §4).
 //
 
 import SpriteKit
 
-final class Joystick: SKNode {
+final class VirtualJoystick: SKNode {
+
+    /// Vecteur de sortie, amplitude 0...1.
+    private(set) var value: CGVector = .zero
 
     private let base: SKShapeNode
     private let knob: SKShapeNode
-    private let radius: CGFloat
+    private let radius: CGFloat = 52
 
-    /// Vecteur de sortie : direction du pouce, amplitude dans [0, 1].
-    /// Zéro si le joystick est inactif ou dans la zone morte.
-    private(set) var vector: CGVector = .zero
-
-    /// Touch actuellement suivi par ce joystick (nil si inactif).
-    private(set) var trackedTouch: UITouch?
-
-    init(radius: CGFloat = GameConfig.joystickRadius) {
-        self.radius = radius
+    override init() {
         base = SKShapeNode(circleOfRadius: radius)
-        knob = SKShapeNode(circleOfRadius: radius * 0.45)
+        base.strokeColor = SKColor(white: 1, alpha: 0.3)
+        base.lineWidth = 2
+        base.fillColor = SKColor(white: 1, alpha: 0.05)
+
+        knob = SKShapeNode(circleOfRadius: 22)
+        knob.strokeColor = .clear
+        knob.fillColor = SKColor(white: 1, alpha: 0.35)
+
         super.init()
-
-        base.strokeColor = SKColor(white: 1, alpha: 0.35)
-        base.fillColor = SKColor(white: 1, alpha: 0.06)
-        base.lineWidth = 3
         addChild(base)
-
-        knob.strokeColor = SKColor(white: 1, alpha: 0.6)
-        knob.fillColor = SKColor(white: 1, alpha: 0.2)
-        knob.lineWidth = 2
         addChild(knob)
-
-        zPosition = 1000
-        isHidden = true
+        alpha = 0
+        isUserInteractionEnabled = false
     }
 
-    @available(*, unavailable)
-    required init?(coder aDecoder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    required init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
 
-    /// Pose le joystick à l'endroit du toucher (coordonnées de la caméra/parent).
-    func begin(at point: CGPoint, touch: UITouch) {
-        trackedTouch = touch
+    /// `point` en coordonnées du parent.
+    func activate(at point: CGPoint) {
+        removeAllActions()
         position = point
         knob.position = .zero
-        vector = .zero
-        isHidden = false
+        value = .zero
+        run(.fadeAlpha(to: 1, duration: 0.08))
     }
 
-    /// Met à jour la position du knob et recalcule le vecteur de sortie.
     func move(to point: CGPoint) {
-        let dx = point.x - position.x
-        let dy = point.y - position.y
-        let dist = max(hypot(dx, dy), 0.0001)
-        let clamped = min(dist, radius)
-
-        // Position visuelle du knob, bornée au rayon de la base.
-        knob.position = CGPoint(x: dx / dist * clamped, y: dy / dist * clamped)
-
-        let amplitude = clamped / radius
-        if amplitude < GameConfig.joystickDeadZone {
-            vector = .zero
-        } else {
-            vector = CGVector(dx: dx / dist * amplitude, dy: dy / dist * amplitude)
+        var offset = CGVector(from: position, to: point)
+        let l = offset.length
+        if l > radius {
+            offset = offset.normalized * radius
         }
+        knob.position = CGPoint(x: offset.dx, y: offset.dy)
+        value = CGVector(dx: offset.dx / radius, dy: offset.dy / radius)
     }
 
-    /// Relâche le joystick : sortie remise à zéro, node masqué.
-    func end() {
-        trackedTouch = nil
-        vector = .zero
+    func deactivate() {
+        value = .zero
         knob.position = .zero
-        isHidden = true
+        run(.fadeOut(withDuration: 0.12))
     }
 }
