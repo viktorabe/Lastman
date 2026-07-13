@@ -11,6 +11,7 @@ enum GameSettings {
     private static let difficultyKey = "lastman.difficulty"
     private static let botCountKey = "lastman.botCount"
     private static let hapticsEnabledKey = "lastman.hapticsEnabled"
+    private static let soundEnabledKey = "lastman.soundEnabled"
     private static let landscapeModeEnabledKey = "lastman.landscapeModeEnabled"
     private static let weaponStyleKey = "lastman.weaponStyle"
     private static let bestSurvivalTimeKey = "lastman.bestSurvivalTime"
@@ -47,6 +48,16 @@ enum GameSettings {
         }
         set {
             UserDefaults.standard.set(newValue, forKey: hapticsEnabledKey)
+        }
+    }
+
+    static var soundEnabled: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: soundEnabledKey) != nil else { return true }
+            return UserDefaults.standard.bool(forKey: soundEnabledKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: soundEnabledKey)
         }
     }
 

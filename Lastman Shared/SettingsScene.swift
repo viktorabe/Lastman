@@ -12,6 +12,7 @@ final class SettingsScene: SKScene {
     private var difficultyButtons: [Difficulty: MenuButton] = [:]
     private var botCountLabel: SKLabelNode!
     private var hapticsToggle: ToggleButton!
+    private var soundToggle: ToggleButton!
     private var landscapeToggle: ToggleButton!
 
     static func make(size: CGSize) -> SettingsScene {
@@ -41,9 +42,10 @@ final class SettingsScene: SKScene {
         let difficultyButtonY: CGFloat = compact ? 32 : 66
         let botsTitleY: CGFloat = compact ? -24 : -10
         let botsY: CGFloat = compact ? -70 : -64
-        let landscapeY: CGFloat = compact ? -126 : -132
-        let hapticsY: CGFloat = compact ? -126 : -132
-        let backY: CGFloat = compact ? -178 : -270
+        let landscapeY: CGFloat = compact ? -120 : -118
+        let soundY: CGFloat = compact ? -120 : -178
+        let hapticsY: CGFloat = compact ? -120 : -238
+        let backY: CGFloat = compact ? -178 : -318
 
         let title = makeLabel("RÉGLAGES", size: 36, font: UIFont2.heavy)
         title.position = CGPoint(x: 0, y: titleY)
@@ -93,15 +95,22 @@ final class SettingsScene: SKScene {
         landscapeToggle = ToggleButton(text: "Paysage", isOn: GameSettings.landscapeModeEnabled) { [weak self] in
             self?.toggleLandscapeMode()
         }
-        landscapeToggle.position = compact ? CGPoint(x: -136, y: landscapeY) : CGPoint(x: 0, y: -132)
-        landscapeToggle.setScale(compact ? 0.9 : 1)
+        landscapeToggle.position = compact ? CGPoint(x: -170, y: landscapeY) : CGPoint(x: 0, y: landscapeY)
+        landscapeToggle.setScale(compact ? 0.65 : 1)
         addChild(landscapeToggle)
+
+        soundToggle = ToggleButton(text: "Son", isOn: GameSettings.soundEnabled) { [weak self] in
+            self?.toggleSound()
+        }
+        soundToggle.position = compact ? CGPoint(x: 0, y: soundY) : CGPoint(x: 0, y: soundY)
+        soundToggle.setScale(compact ? 0.65 : 1)
+        addChild(soundToggle)
 
         hapticsToggle = ToggleButton(text: "Haptique", isOn: GameSettings.hapticsEnabled) { [weak self] in
             self?.toggleHaptics()
         }
-        hapticsToggle.position = compact ? CGPoint(x: 136, y: hapticsY) : CGPoint(x: 0, y: -194)
-        hapticsToggle.setScale(compact ? 0.9 : 1)
+        hapticsToggle.position = compact ? CGPoint(x: 170, y: hapticsY) : CGPoint(x: 0, y: hapticsY)
+        hapticsToggle.setScale(compact ? 0.65 : 1)
         addChild(hapticsToggle)
 
         let back = MenuButton(text: "RETOUR") { [weak self] in
@@ -130,6 +139,14 @@ final class SettingsScene: SKScene {
         refresh()
     }
 
+    private func toggleSound() {
+        GameSettings.soundEnabled.toggle()
+        if GameSettings.soundEnabled {
+            SoundFX.shared.play(.button)
+        }
+        refresh()
+    }
+
     private func toggleLandscapeMode() {
         let isOn = !GameSettings.landscapeModeEnabled
         GameSettings.landscapeModeEnabled = isOn
@@ -143,6 +160,7 @@ final class SettingsScene: SKScene {
         }
         botCountLabel.text = "\(GameSettings.botCount)"
         landscapeToggle.isOn = GameSettings.landscapeModeEnabled
+        soundToggle.isOn = GameSettings.soundEnabled
         hapticsToggle.isOn = GameSettings.hapticsEnabled
     }
 }

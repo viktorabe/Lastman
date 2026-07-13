@@ -11,6 +11,7 @@ enum Haptics {
     private static var lastPulseAt: TimeInterval = 0
 
     static func buttonTap() {
+        SoundFX.shared.play(.button)
         impact(.light, intensity: 0.65)
     }
 
@@ -28,14 +29,17 @@ enum Haptics {
     }
 
     static func countdownTick() {
+        SoundFX.shared.play(.countdown)
         impact(.soft, intensity: 0.75)
     }
 
     static func matchStarted() {
+        SoundFX.shared.play(.start)
         impact(.rigid, intensity: 0.95)
     }
 
     static func playerShot(style: WeaponStyle = .normal) {
+        SoundFX.shared.play(.shot(style))
         switch style {
         case .normal:
             throttledImpact(.light, intensity: 0.35, minimumDelay: 0.12)
@@ -47,10 +51,12 @@ enum Haptics {
     }
 
     static func hitLanded() {
+        SoundFX.shared.play(.hit)
         throttledImpact(.medium, intensity: 0.55, minimumDelay: 0.1)
     }
 
     static func playerKill(streak: Int) {
+        SoundFX.shared.play(.kill(streak))
         if streak >= 3 {
             notification(.success)
         } else {
@@ -59,6 +65,7 @@ enum Haptics {
     }
 
     static func playerDamaged() {
+        SoundFX.shared.play(.damage)
         throttledImpact(.heavy, intensity: 0.85, minimumDelay: 0.18)
     }
 
@@ -67,10 +74,12 @@ enum Haptics {
     }
 
     static func victory() {
+        SoundFX.shared.play(.victory)
         notification(.success)
     }
 
     static func defeat() {
+        SoundFX.shared.play(.defeat)
         notification(.error)
     }
 

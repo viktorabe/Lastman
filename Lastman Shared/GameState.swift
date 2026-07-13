@@ -23,11 +23,17 @@ struct MatchSummary {
     let playerBreakablesDestroyed: Int
     let bestKillStreak: Int
     let deathCause: String
+    let matchMode: MatchMode
+    let weaponStyle: WeaponStyle
+    let score: Int
+    var xpEarned = 0
+    var progressionLevel = 1
+    var didLevelUp = false
+    var isNewDailyBest = false
 }
 
 /// États de match internes (SPEC §5).
 enum MatchPhase {
-    case preparing
     case countdown
     case active
     case ended
@@ -37,7 +43,7 @@ final class GameState {
 
     private(set) var characters: [Character] = []
     private(set) var player: Character!
-    var phase: MatchPhase = .preparing
+    var phase: MatchPhase = .countdown
     private var matchStartTime: TimeInterval = 0
     private var matchEndTime: TimeInterval?
 
@@ -110,7 +116,12 @@ final class GameState {
         deathCause = cause
     }
 
-    func finishMatch(victory: Bool, at time: TimeInterval) -> MatchSummary {
+    func finishMatch(
+        victory: Bool,
+        at time: TimeInterval,
+        matchMode: MatchMode,
+        weaponStyle: WeaponStyle
+    ) -> MatchSummary {
         matchEndTime = time
         if victory {
             deathCause = "Dernier debout."
@@ -122,6 +133,18 @@ final class GameState {
         if newBest {
             GameSettings.bestSurvivalTime = survived
         }
+
+        let score = ChallengeScoring.score(
+            victory: victory,
+            rank: playerRank,
+            total: totalCount,
+            survivalTime: survived,
+            kills: playerKills,
+            damage: playerDamageDealt,
+            pickups: playerPickupsCollected,
+            breakables: playerBreakablesDestroyed,
+            streak: bestKillStreak
+        )
 
         return MatchSummary(
             victory: victory,
@@ -136,7 +159,10 @@ final class GameState {
             playerPickupsCollected: playerPickupsCollected,
             playerBreakablesDestroyed: playerBreakablesDestroyed,
             bestKillStreak: bestKillStreak,
-            deathCause: deathCause
+            deathCause: deathCause,
+            matchMode: matchMode,
+            weaponStyle: weaponStyle,
+            score: score
         )
     }
 }

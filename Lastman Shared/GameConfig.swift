@@ -12,21 +12,26 @@ import CoreGraphics
 enum GameConfig {
 
     // MARK: Déplacement (SPEC §6.1)
-    static let playerSpeed: CGFloat = 205          // plus nerveux : le premier duel arrive vite
-    static let velocityLerpRate: CGFloat = 15      // départs et changements de direction plus francs
+    static let playerSpeed: CGFloat = 175          // rythme plus posé, avec le temps de lire un duel
+    static let velocityLerpRate: CGFloat = 10.5    // changements contrôlables sans devenir mous
     static let characterRadius: CGFloat = 15
     static let characterVisualScale: CGFloat = 1.18
 
     // MARK: Tir et combat (SPEC §6.2)
-    static let fireInterval: TimeInterval = 0.35
+    static let fireInterval: TimeInterval = 0.60
     static let projectileSpeed: CGFloat = 500
     static let projectileRange: CGFloat = 350
     static let projectileDamage: CGFloat = 20
     static let maxHP: CGFloat = 100
+    static let autoShootAcquisitionDelay: TimeInterval = 0.50
+    static let botAimWindup: TimeInterval = 0.50
 
     // MARK: Objets cassables et pickups
-    static let maxBreakables = 5
-    static let breakableRespawnInterval: TimeInterval = 9
+    static let maxBreakables = 9
+    static let initialBreakableCountRange = 7...9
+    static let minimumHealBreakables = 3
+    static let breakableRespawnDelayRange: ClosedRange<TimeInterval> = 4.5...9.5
+    static let breakableRespawnBatchRange = 1...2
     static let breakableRadius: CGFloat = 18
     static let breakableHP: CGFloat = 40
     static let breakableSpawnInset: CGFloat = 90
@@ -48,8 +53,8 @@ enum GameConfig {
 
     // MARK: Zone (SPEC §6.4)
     static let zoneStages: [CGFloat] = [1.0, 0.70, 0.45, 0.25, 0.10, 0.02]
-    static let zoneShrinkInterval: TimeInterval = 12
-    static let zoneShrinkDuration: TimeInterval = 2.2
+    static let zoneShrinkInterval: TimeInterval = 15
+    static let zoneShrinkDuration: TimeInterval = 2.6
     static let poisonDPS: CGFloat = 7
     static let zoneEdgeMargin: CGFloat = 80        // marge déclenchant avoidZone pendant un palier
 
@@ -142,8 +147,8 @@ enum WeaponStyle: Int, CaseIterable {
     var fireInterval: TimeInterval {
         switch self {
         case .normal: return GameConfig.fireInterval
-        case .heavy: return 0.50
-        case .sniper: return 0.70
+        case .heavy: return 0.88
+        case .sniper: return 1.05
         }
     }
 
@@ -221,9 +226,9 @@ enum Difficulty: Int, CaseIterable {
     /// Écart-type du bruit gaussien ajouté à l'angle de tir (degrés).
     var aimErrorDegrees: CGFloat {
         switch self {
-        case .easy: return 18
-        case .medium: return 9
-        case .hard: return 3
+        case .easy: return 10
+        case .medium: return 4
+        case .hard: return 1.5
         }
     }
 

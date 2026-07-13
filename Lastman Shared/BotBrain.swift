@@ -287,6 +287,9 @@ final class BotAttackState: BotState {
     override func begin() {
         strafeSign = Bool.random() ? 1 : -1
         strafeFlipTimer = .random(in: 0.8...1.6)
+        // Le joueur voit le bot se mettre en joue avant le premier projectile.
+        // Une esquive volontaire remplace ainsi une collision décidée au hasard.
+        bot.fireCooldown = max(bot.fireCooldown, GameConfig.botAimWindup)
     }
 
     override func tick(dt: TimeInterval) {

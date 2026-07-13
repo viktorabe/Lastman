@@ -5,6 +5,7 @@
 //  Created by Viktor Abé on 28/06/2026.
 //
 
+import SpriteKit
 import UIKit
 
 class SceneDelegate: UIResponder, UIWindowSceneDelegate {
@@ -16,6 +17,9 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // If using a storyboard, the `window` property will automatically be initialized and attached to the scene.
         // This delegate does not imply the connecting scene or session are new (see `application:configurationForConnectingSceneSession` instead).
         guard let _ = (scene as? UIWindowScene) else { return }
+        if let url = connectionOptions.urlContexts.first?.url {
+            ChallengeLinkStore.receive(url)
+        }
     }
 
     func sceneDidDisconnect(_ scene: UIScene) {
@@ -46,5 +50,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         // to restore the scene back to its current state.
     }
 
-}
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        guard let url = URLContexts.first?.url else { return }
+        ChallengeLinkStore.receive(url)
+        guard let root = window?.rootViewController,
+              let skView = root.view as? SKView else { return }
+        skView.presentScene(MenuScene.make(size: skView.bounds.size), transition: .fade(withDuration: 0.25))
+    }
 
+}

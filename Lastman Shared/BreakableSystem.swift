@@ -99,19 +99,27 @@ final class BreakableSystem {
     private let blockedAreas: [(center: CGPoint, radius: CGFloat)]
     private var breakables: [BreakableNode] = []
     private var pickups: [PickupNode] = []
-    private var nextSpawnTime: TimeInterval = 0
+    private var nextSpawnTime: TimeInterval?
+    private var randomGenerator: SeededGenerator
     var onPlayerPickupCollected: (() -> Void)?
     var onPlayerBreakableDestroyed: (() -> Void)?
     var onDamageDealt: ((Character, Character, CGFloat) -> Void)?
 
-    init(worldLayer: SKNode, arenaRect: CGRect, blockedAreas: [(center: CGPoint, radius: CGFloat)]) {
+    init(
+        worldLayer: SKNode,
+        arenaRect: CGRect,
+        blockedAreas: [(center: CGPoint, radius: CGFloat)],
+        seed: UInt64? = nil
+    ) {
         self.worldLayer = worldLayer
         self.arenaRect = arenaRect
         self.blockedAreas = blockedAreas
+        self.randomGenerator = SeededGenerator(seed: seed.map { $0 ^ 0xB0B0 } ?? UInt64.random(in: 1...UInt64.max))
     }
 
     func spawnInitial(characters: [Character]) {
-        for _ in 0..<GameConfig.maxBreakables {
+        let count = Int.random(in: GameConfig.initialBreakableCountRange, using: &randomGenerator)
+        for _ in 0..<count {
             spawnBreakableIfPossible(near: characters)
         }
     }
@@ -120,11 +128,20 @@ final class BreakableSystem {
         breakables.removeAll { $0.parent == nil }
         pickups.removeAll { $0.parent == nil }
 
-        guard currentTime >= nextSpawnTime else { return }
-        if breakables.count < GameConfig.maxBreakables {
-            spawnBreakableIfPossible(near: characters)
-            nextSpawnTime = currentTime + GameConfig.breakableRespawnInterval
+        guard let nextSpawnTime else {
+            scheduleNextSpawn(after: currentTime)
+            return
         }
+        guard currentTime >= nextSpawnTime else { return }
+
+        let missingCount = GameConfig.maxBreakables - breakables.count
+        if missingCount > 0 {
+            let batchSize = min(missingCount, Int.random(in: GameConfig.breakableRespawnBatchRange, using: &randomGenerator))
+            for _ in 0..<batchSize {
+                spawnBreakableIfPossible(near: characters)
+            }
+        }
+        scheduleNextSpawn(after: currentTime)
     }
 
     func handleContact(_ contact: SKPhysicsContact, characters: [Character]) -> Bool {
@@ -235,19 +252,34 @@ final class BreakableSystem {
     }
 
     private func randomKind() -> BreakableKind {
-        let roll = CGFloat.random(in: 0...1)
-        if roll < 0.42 { return .heal }
-        if roll < 0.68 { return .speed }
-        if roll < 0.88 { return .shield }
+        let activeHealCount = breakables.reduce(into: 0) { count, breakable in
+            if breakable.parent != nil, breakable.kind == .heal {
+                count += 1
+            }
+        }
+        if activeHealCount < GameConfig.minimumHealBreakables {
+            return .heal
+        }
+
+        let roll = CGFloat.random(in: 0...1, using: &randomGenerator)
+        if roll < 0.55 { return .heal }
+        if roll < 0.75 { return .speed }
+        if roll < 0.90 { return .shield }
         return .explosive
+    }
+
+    private func scheduleNextSpawn(after currentTime: TimeInterval) {
+        nextSpawnTime = currentTime + TimeInterval.random(in: GameConfig.breakableRespawnDelayRange, using: &randomGenerator)
     }
 
     private func randomSpawnPoint(avoiding characters: [Character]) -> CGPoint? {
         let inset = arenaRect.insetBy(dx: GameConfig.breakableSpawnInset,
                                       dy: GameConfig.breakableSpawnInset)
         for _ in 0..<40 {
-            let point = CGPoint(x: CGFloat.random(in: inset.minX...inset.maxX),
-                                y: CGFloat.random(in: inset.minY...inset.maxY))
+            let point = CGPoint(
+                x: CGFloat.random(in: inset.minX...inset.maxX, using: &randomGenerator),
+                y: CGFloat.random(in: inset.minY...inset.maxY, using: &randomGenerator)
+            )
             if isSpawnPointClear(point, characters: characters) {
                 return point
             }

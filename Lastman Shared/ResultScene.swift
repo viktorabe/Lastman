@@ -26,10 +26,8 @@ final class ResultScene: SKScene {
         backgroundColor = SKColor(white: 0.04, alpha: 1)
         let compact = size.height < 520
         let titleY = compact ? size.height / 2 - 48 : size.height * 0.2
-        let statStartY = compact ? titleY - 114 : titleY - 138
-        let statGap: CGFloat = compact ? 22 : 24
-        let replayY: CGFloat = compact ? -90 : -112
-        let menuY: CGFloat = compact ? -150 : -184
+        let statStartY = compact ? titleY - 158 : titleY - 160
+        let statGap: CGFloat = compact ? 16 : 22
 
         let titleColor: SKColor = summary.victory
             ? SKColor(red: 0.35, green: 0.82, blue: 1.0, alpha: 1)
@@ -48,10 +46,15 @@ final class ResultScene: SKScene {
         rankLabel.position = CGPoint(x: 0, y: titleY - 54)
         addChild(rankLabel)
 
-        let subtitle = makeLabel(summary.deathCause, size: 16,
+        let subtitle = makeLabel(summary.deathCause, size: compact ? 13 : 16,
                                  color: SKColor(white: 1, alpha: 0.5))
         subtitle.position = CGPoint(x: 0, y: titleY - 92)
         addChild(subtitle)
+
+        let scoreLabel = makeLabel("\(summary.score) PTS", size: compact ? 22 : 30,
+                                   color: titleColor, font: UIFont2.heavy)
+        scoreLabel.position = CGPoint(x: 0, y: compact ? titleY - 120 : titleY - 126)
+        addChild(scoreLabel)
 
         let bestPrefix = summary.isNewBestSurvival ? "Nouveau record" : "Record"
         let lines = [
@@ -61,28 +64,63 @@ final class ResultScene: SKScene {
             "Meilleure série x\(summary.bestKillStreak) · \(summary.playerBreakablesDestroyed) caisses",
         ]
         for (index, line) in lines.enumerated() {
-            let stat = makeLabel(line, size: 15, color: SKColor(white: 1, alpha: 0.64), font: UIFont2.bold)
+            let stat = makeLabel(line, size: compact ? 11 : 14, color: SKColor(white: 1, alpha: 0.64), font: UIFont2.bold)
             stat.position = CGPoint(x: 0, y: statStartY - CGFloat(index) * statGap)
             addChild(stat)
         }
 
+        let progressText = summary.didLevelUp
+            ? "NIVEAU \(summary.progressionLevel) DÉBLOQUÉ · +\(summary.xpEarned) XP"
+            : "NIVEAU \(summary.progressionLevel) · +\(summary.xpEarned) XP"
+        let progress = makeLabel(progressText, size: compact ? 11 : 13,
+                                 color: SKColor(red: 0.95, green: 0.86, blue: 0.42, alpha: 0.88),
+                                 font: UIFont2.bold)
+        progress.position = CGPoint(x: 0, y: statStartY - CGFloat(lines.count) * statGap - 2)
+        addChild(progress)
+
         let replay = MenuButton(text: "REJOUER") { [weak self] in
             guard let self, let view = self.view else { return }
-            let game = GameScene(size: self.size,
-                                 difficulty: GameSettings.difficulty,
-                                 botCount: GameSettings.botCount,
-                                 weaponStyle: GameSettings.weaponStyle,
-                                 quickStart: true)
+            let replayMode: MatchMode = self.summary.matchMode == .tutorial ? .standard : self.summary.matchMode
+            let challenge = replayMode.dailyChallenge
+            let game = GameScene(
+                size: self.size,
+                difficulty: challenge?.difficulty ?? GameSettings.difficulty,
+                botCount: challenge?.botCount ?? GameSettings.botCount,
+                weaponStyle: challenge?.weaponStyle ?? self.summary.weaponStyle,
+                quickStart: true,
+                matchMode: replayMode
+            )
             view.presentScene(game, transition: .crossFade(withDuration: 0.18))
         }
-        replay.position = CGPoint(x: 0, y: replayY)
+        replay.position = compact ? CGPoint(x: -92, y: -120) : CGPoint(x: 0, y: -112)
+        replay.setScale(compact ? 0.68 : 0.9)
         addChild(replay)
+
+        let share = MenuButton(text: "DÉFIER UN AMI") { [weak self] in
+            guard let self else { return }
+            ShareManager.share(summary: self.summary, from: self.hostingViewController)
+        }
+        share.position = compact ? CGPoint(x: 92, y: -120) : CGPoint(x: 0, y: -166)
+        share.setScale(compact ? 0.68 : 0.9)
+        addChild(share)
+
+        if summary.matchMode.dailyChallenge != nil {
+            let leaderboard = MenuButton(text: "CLASSEMENT") { [weak self] in
+                GameCenterManager.shared.showLeaderboards(from: self?.hostingViewController)
+            }
+            leaderboard.position = compact ? CGPoint(x: -92, y: -166) : CGPoint(x: 0, y: -220)
+            leaderboard.setScale(compact ? 0.68 : 0.9)
+            addChild(leaderboard)
+        }
 
         let menu = MenuButton(text: "MENU") { [weak self] in
             guard let self, let view = self.view else { return }
             view.presentScene(MenuScene.make(size: self.size), transition: .fade(withDuration: 0.3))
         }
-        menu.position = CGPoint(x: 0, y: menuY)
+        menu.position = compact
+            ? CGPoint(x: summary.matchMode.dailyChallenge == nil ? 0 : 92, y: -166)
+            : CGPoint(x: 0, y: summary.matchMode.dailyChallenge == nil ? -220 : -274)
+        menu.setScale(compact ? 0.68 : 0.9)
         addChild(menu)
     }
 

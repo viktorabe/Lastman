@@ -26,7 +26,8 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
     private let botCount: Int
     private let weaponStyle: WeaponStyle
     private let quickStart: Bool
-    private let playerSpawnOptions: [CGPoint]
+    private let matchMode: MatchMode
+    private let playerSpawnPoint: CGPoint
 
     private let state = GameState()
     private let worldLayer = SKNode()
@@ -57,6 +58,8 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
     private var shakeAmount: CGFloat = 0
     private var topThreeAnnounced = false
     private var hitStopGeneration = 0
+    private weak var autoShootTarget: Character?
+    private var autoShootAcquisitionRemaining: TimeInterval = 0
 
     // HUD
     private var hpBarBackground: SKShapeNode!
@@ -69,20 +72,21 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
     private var topLabel: SKLabelNode!
     private var comboLabel: SKLabelNode!
     private var impactFlash: SKShapeNode!
-    private var spawnChoiceOverlay: SKNode?
-    private var spawnMarkers: [SKNode] = []
     private var countdownLabel: SKLabelNode!
     private var poisonVignette: SKShapeNode!
+    private var modeLabel: SKLabelNode!
+    private var tutorialLabel: SKLabelNode!
 
     // MARK: - Init
 
     init(size: CGSize, difficulty: Difficulty, botCount: Int, weaponStyle: WeaponStyle = .normal,
-         quickStart: Bool = false) {
+         quickStart: Bool = false, matchMode: MatchMode = .standard) {
         self.difficulty = difficulty
         self.botCount = max(1, botCount)
         self.weaponStyle = weaponStyle
         self.quickStart = quickStart
-        self.playerSpawnOptions = GameScene.makePlayerSpawnOptions()
+        self.matchMode = matchMode
+        self.playerSpawnPoint = GameScene.makePlayerSpawnPoint(seed: matchMode.dailyChallenge?.seed)
         super.init(size: size)
         scaleMode = .resizeFill
     }
@@ -122,11 +126,8 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
             self?.performHitStop(duration: duration)
         }
 
-        if quickStart {
-            selectPlayerSpawn(playerSpawnOptions[0])
-        } else {
-            presentSpawnChoice()
-        }
+        buildBreakables()
+        startCountdown()
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
@@ -135,16 +136,20 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
         input?.updateScreenSize(size)
     }
 
-    private static func makePlayerSpawnOptions() -> [CGPoint] {
-        let options = [
+    private static func makePlayerSpawnPoint(seed: UInt64?) -> CGPoint {
+        let spawnPoints = [
             CGPoint(x: 600, y: 180),
             CGPoint(x: 185, y: 315),
             CGPoint(x: 1015, y: 330),
             CGPoint(x: 250, y: 1180),
             CGPoint(x: 930, y: 1220),
             CGPoint(x: 600, y: 1410),
-        ].shuffled()
-        return Array(options.prefix(3))
+        ]
+        guard let seed else {
+            return spawnPoints.randomElement() ?? CGPoint(x: 600, y: 180)
+        }
+        var generator = SeededGenerator(seed: seed ^ 0xA11CE)
+        return spawnPoints[Int.random(in: 0..<spawnPoints.count, using: &generator)]
     }
 
     private var arenaRect: CGRect {
@@ -272,10 +277,19 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
 
     private func buildZone() {
         // Centre légèrement aléatoire autour du centre d'arène (SPEC §6.4).
-        let center = CGPoint(
-            x: arenaRect.midX + .random(in: -80...80),
-            y: arenaRect.midY + .random(in: -80...80)
-        )
+        let center: CGPoint
+        if let challenge = matchMode.dailyChallenge {
+            var generator = SeededGenerator(seed: challenge.seed ^ 0x20AE)
+            center = CGPoint(
+                x: arenaRect.midX + CGFloat.random(in: -80...80, using: &generator),
+                y: arenaRect.midY + CGFloat.random(in: -80...80, using: &generator)
+            )
+        } else {
+            center = CGPoint(
+                x: arenaRect.midX + .random(in: -80...80),
+                y: arenaRect.midY + .random(in: -80...80)
+            )
+        }
         // Rayon initial couvrant toute l'arène depuis le centre choisi.
         let corners = [
             CGPoint(x: 0, y: 0),
@@ -284,14 +298,20 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
             CGPoint(x: arenaRect.maxX, y: arenaRect.maxY),
         ]
         let initialRadius = corners.map { $0.distance(to: center) }.max() ?? 1000
-        zoneImpl = ZoneSystem(center: center, initialRadius: initialRadius,
-                              parent: worldLayer, arenaSize: GameConfig.arenaSize)
+        zoneImpl = ZoneSystem(
+            center: center,
+            initialRadius: initialRadius,
+            parent: worldLayer,
+            arenaSize: GameConfig.arenaSize,
+            initialPressureMultiplier: matchMode.dailyChallenge?.modifier.zonePressureMultiplier ?? 1
+        )
     }
 
     private func buildBreakables() {
         breakableImpl = BreakableSystem(worldLayer: worldLayer,
                                         arenaRect: arenaRect,
-                                        blockedAreas: obstacleLayout)
+                                        blockedAreas: obstacleLayout,
+                                        seed: matchMode.dailyChallenge?.seed)
         breakableImpl.onPlayerPickupCollected = { [weak self] in
             self?.state.recordPlayerPickup()
         }
@@ -306,9 +326,9 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
     }
 
     private func spawnCharacters() {
-        let playerColor = SKColor(red: 0.35, green: 0.82, blue: 1.0, alpha: 1)
+        let playerColor = ProgressionStore.playerColor
         let player = Character(name: "Toi", isPlayer: true, color: playerColor,
-                               position: playerSpawnOptions[0])
+                               position: playerSpawnPoint)
         state.addPlayer(player)
         worldLayer.addChild(player.node)
 
@@ -385,6 +405,10 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
                                 color: SKColor(white: 1, alpha: 0.48), font: UIFont2.bold)
         hud.addChild(weaponLabel)
 
+        modeLabel = makeLabel(matchMode.title, size: 10,
+                              color: SKColor(white: 1, alpha: 0.42), font: UIFont2.bold)
+        hud.addChild(modeLabel)
+
         statusLabel = makeLabel("", size: 12, color: SKColor(white: 1, alpha: 0.62), font: UIFont2.bold)
         hud.addChild(statusLabel)
 
@@ -413,6 +437,12 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
         countdownLabel.zPosition = 95
         hud.addChild(countdownLabel)
 
+        tutorialLabel = makeLabel("", size: 17, color: .white, font: UIFont2.heavy)
+        tutorialLabel.position = CGPoint(x: 0, y: -size.height * 0.18)
+        tutorialLabel.zPosition = 98
+        tutorialLabel.alpha = 0
+        hud.addChild(tutorialLabel)
+
         input = InputController(hud: hud, screenSize: size)
         playerController = PlayerController(character: state.player, input: input)
         layoutHUD()
@@ -437,75 +467,12 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
                                    transform: nil)
         hpBarBackground?.position = CGPoint(x: 0, y: h / 2 - hpInset)
         aliveLabel?.position = CGPoint(x: -w / 2 + 20, y: h / 2 - topInset)
-        weaponLabel?.position = CGPoint(x: 0, y: h / 2 - topInset)
-        statusLabel?.position = CGPoint(x: 0, y: h / 2 - topInset - 22)
+        weaponLabel?.position = CGPoint(x: 0, y: h / 2 - hpInset - 38)
+        modeLabel?.position = CGPoint(x: 0, y: h / 2 - hpInset - 56)
+        statusLabel?.position = CGPoint(x: 0, y: h / 2 - hpInset - 74)
         zoneLabel?.position = CGPoint(x: w / 2 - 20, y: h / 2 - topInset)
         feedLabel?.position = CGPoint(x: -w / 2 + 20, y: h / 2 - feedInset)
-    }
-
-    private func presentSpawnChoice() {
-        state.phase = .preparing
-        input.isEnabled = false
-        cameraNode.position = CGPoint(x: arenaRect.midX, y: arenaRect.midY)
-
-        let overlay = SKNode()
-        overlay.zPosition = 98
-        hud.addChild(overlay)
-        spawnChoiceOverlay = overlay
-
-        let title = makeLabel("CHOISIS TON SPAWN", size: 24, font: UIFont2.heavy)
-        title.position = CGPoint(x: 0, y: 118)
-        overlay.addChild(title)
-
-        let subtitle = makeLabel("le match démarre après ton choix", size: 13, color: SKColor(white: 1, alpha: 0.52))
-        subtitle.position = CGPoint(x: 0, y: 86)
-        overlay.addChild(subtitle)
-
-        let spacing: CGFloat = 112
-        for (index, point) in playerSpawnOptions.enumerated() {
-            addSpawnMarker(index: index, at: point)
-            let button = MenuButton(text: "\(index + 1)", width: 72, height: 58, fontSize: 22) { [weak self] in
-                self?.selectPlayerSpawn(point)
-            }
-            button.position = CGPoint(x: CGFloat(index - 1) * spacing, y: 30)
-            overlay.addChild(button)
-        }
-    }
-
-    private func addSpawnMarker(index: Int, at point: CGPoint) {
-        let marker = SKNode()
-        marker.position = point
-        marker.zPosition = 32
-
-        let ring = SKShapeNode(circleOfRadius: 30)
-        ring.strokeColor = state.player.color
-        ring.fillColor = state.player.color.withAlphaComponent(0.12)
-        ring.lineWidth = 3
-        marker.addChild(ring)
-
-        let label = makeLabel("\(index + 1)", size: 24, color: .white, font: UIFont2.heavy)
-        marker.addChild(label)
-
-        worldLayer.addChild(marker)
-        spawnMarkers.append(marker)
-        marker.run(.repeatForever(.sequence([
-            .scale(to: 1.12, duration: 0.5),
-            .scale(to: 1.0, duration: 0.5),
-        ])))
-    }
-
-    private func selectPlayerSpawn(_ point: CGPoint) {
-        state.player.node.position = point
-        cameraNode.position = point
-        for marker in spawnMarkers {
-            marker.removeFromParent()
-        }
-        spawnMarkers.removeAll()
-        buildBreakables()
-        spawnChoiceOverlay?.removeFromParent()
-        spawnChoiceOverlay = nil
-        Haptics.selectionChanged()
-        startCountdown()
+        tutorialLabel?.position = CGPoint(x: 0, y: -h * 0.18)
     }
 
     // MARK: - Countdown (SPEC §5 : spawns placés, contrôles bloqués)
@@ -546,8 +513,40 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
             self.state.startMatch(at: self.currentGameTime)
             self.input.isEnabled = true
             Haptics.matchStarted()
+            if self.matchMode == .tutorial {
+                self.showTutorialHints()
+            }
         })
         run(.sequence(steps))
+    }
+
+    private func showTutorialHints() {
+        let hints = [
+            "GLISSE À GAUCHE POUR BOUGER",
+            "AUTO-VISÉE ACTIVE",
+            "GLISSE À DROITE POUR VISER",
+            "RESTE DANS LE CERCLE",
+            "SOIS LE DERNIER DEBOUT",
+        ]
+        var actions: [SKAction] = []
+        for hint in hints {
+            actions.append(.run { [weak self] in
+                guard let self else { return }
+                self.tutorialLabel.text = hint
+                self.tutorialLabel.alpha = 0
+                self.tutorialLabel.setScale(0.92)
+                self.tutorialLabel.run(.group([
+                    .fadeIn(withDuration: 0.16),
+                    .scale(to: 1, duration: 0.16),
+                ]))
+            })
+            actions.append(.wait(forDuration: 2.2))
+            actions.append(.run { [weak self] in
+                self?.tutorialLabel.run(.fadeOut(withDuration: 0.2))
+            })
+            actions.append(.wait(forDuration: 0.25))
+        }
+        tutorialLabel.run(.sequence(actions), withKey: "tutorial")
     }
 
     // MARK: - Boucle principale
@@ -562,7 +561,7 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
 
         let playerHPBefore = state.player.hp
         playerController.update()
-        updatePlayerAutoShoot()
+        updatePlayerAutoShoot(dt: dt)
         for brain in brains {
             brain.update(dt: dt)
         }
@@ -639,22 +638,58 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
         cameraNode.position = next
     }
 
-    private func updatePlayerAutoShoot() {
-        guard state.player.isAlive, state.player.aimIntent == nil else { return }
-        guard let target = nearestAutoShootTarget() else { return }
+    private func updatePlayerAutoShoot(dt: TimeInterval) {
+        guard state.player.isAlive else {
+            resetAutoShootAcquisition()
+            return
+        }
+
+        // La visée manuelle reste immédiate : elle doit toujours être plus réactive
+        // et plus précise que l'assistance automatique.
+        guard !input.isAiming else {
+            resetAutoShootAcquisition()
+            return
+        }
+
+        let target: Character
+        if let lockedTarget = autoShootTarget, isValidAutoShootTarget(lockedTarget) {
+            target = lockedTarget
+        } else if let nearestTarget = nearestAutoShootTarget() {
+            autoShootTarget = nearestTarget
+            autoShootAcquisitionRemaining = GameConfig.autoShootAcquisitionDelay
+            state.player.aimIntent = nil
+            return
+        } else {
+            resetAutoShootAcquisition()
+            state.player.aimIntent = nil
+            return
+        }
+
+        autoShootAcquisitionRemaining = max(0, autoShootAcquisitionRemaining - dt)
+        guard autoShootAcquisitionRemaining <= 0 else {
+            state.player.aimIntent = nil
+            return
+        }
         state.player.aimIntent = CGVector(from: state.player.position, to: target.position).normalized
     }
 
-    private func nearestAutoShootTarget() -> Character? {
-        let maxDistance = weaponStyle.projectileRange
+    private func resetAutoShootAcquisition() {
+        autoShootTarget = nil
+        autoShootAcquisitionRemaining = 0
+    }
+
+    private func isValidAutoShootTarget(_ character: Character) -> Bool {
         let playerPosition = state.player.position
-        let candidates = state.characters.filter { character in
-            character !== state.player
-                && character.isAlive
-                && playerPosition.distance(to: character.position) <= maxDistance
-                && bushSystem.canPerceive(character)
-                && lineOfSightClear(from: playerPosition, to: character.position)
-        }
+        return character !== state.player
+            && character.isAlive
+            && playerPosition.distance(to: character.position) <= weaponStyle.projectileRange
+            && bushSystem.canPerceive(character)
+            && lineOfSightClear(from: playerPosition, to: character.position)
+    }
+
+    private func nearestAutoShootTarget() -> Character? {
+        let playerPosition = state.player.position
+        let candidates = state.characters.filter(isValidAutoShootTarget)
         return candidates.min {
             playerPosition.distance(to: $0.position) < playerPosition.distance(to: $1.position)
         }
@@ -794,7 +829,23 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
         } else {
             Haptics.defeat()
         }
-        let summary = state.finishMatch(victory: victory, at: currentGameTime)
+        var summary = state.finishMatch(
+            victory: victory,
+            at: currentGameTime,
+            matchMode: matchMode,
+            weaponStyle: weaponStyle
+        )
+        let progress = ProgressionStore.record(summary)
+        summary.xpEarned = progress.xpEarned
+        summary.progressionLevel = progress.level
+        summary.didLevelUp = progress.didLevelUp
+        summary.isNewDailyBest = progress.isNewDailyBest
+        if matchMode == .tutorial {
+            ProgressionStore.hasCompletedFirstMatch = true
+        }
+        if let challenge = matchMode.dailyChallenge {
+            GameCenterManager.shared.submitDailyScore(summary.score, dayKey: challenge.dayKey)
+        }
 
         run(.sequence([
             .wait(forDuration: victory ? 0.9 : 0.65),

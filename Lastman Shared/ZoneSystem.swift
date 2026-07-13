@@ -44,11 +44,18 @@ final class ZoneSystem {
         }
     }
 
-    init(center: CGPoint, initialRadius: CGFloat, parent: SKNode, arenaSize: CGSize) {
+    init(
+        center: CGPoint,
+        initialRadius: CGFloat,
+        parent: SKNode,
+        arenaSize: CGSize,
+        initialPressureMultiplier: CGFloat = 1
+    ) {
         self.center = center
         self.initialRadius = initialRadius
         self.radius = initialRadius * GameConfig.zoneStages[0]
         self.phase = .waiting(remaining: GameConfig.zoneShrinkInterval)
+        self.pressureMultiplier = initialPressureMultiplier
 
         // Voile hors-zone : teinte rouge sur toute l'arène, recouverte à
         // l'intérieur du cercle safe par un sol opaque couleur d'origine.
