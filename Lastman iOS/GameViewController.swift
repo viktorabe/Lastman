@@ -13,6 +13,10 @@ class GameViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        NotificationCenter.default.addObserver(self,
+                                               selector: #selector(applyOrientationPreference),
+                                               name: GameSettings.orientationPreferenceDidChange,
+                                               object: nil)
         
         let skView = self.view as! SKView
         // On démarre sur le menu ; les transitions enchaînent vers le match.
@@ -20,7 +24,8 @@ class GameViewController: UIViewController {
         if ProcessInfo.processInfo.environment["LASTMAN_AUTOPLAY"] != nil {
             skView.presentScene(GameScene(size: skView.bounds.size,
                                           difficulty: GameSettings.difficulty,
-                                          botCount: GameSettings.botCount))
+                                          botCount: GameSettings.botCount,
+                                          weaponStyle: GameSettings.weaponStyle))
         } else {
             skView.presentScene(MenuScene.make(size: skView.bounds.size))
         }
@@ -29,20 +34,41 @@ class GameViewController: UIViewController {
         #endif
 
         skView.ignoresSiblingOrder = true
+        #if DEBUG
         skView.showsFPS = true
         skView.showsNodeCount = true
+        #else
+        skView.showsFPS = false
+        skView.showsNodeCount = false
+        #endif
+        applyOrientationPreference()
+    }
+
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        applyOrientationPreference()
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     override var supportedInterfaceOrientations: UIInterfaceOrientationMask {
-        // SPEC §4 : portrait sur iPhone (à revalider en playtest).
         if UIDevice.current.userInterfaceIdiom == .phone {
-            return .portrait
+            return GameSettings.landscapeModeEnabled ? .landscape : .portrait
         } else {
-            return .all
+            return GameSettings.landscapeModeEnabled ? .landscape : .all
         }
     }
 
     override var prefersStatusBarHidden: Bool {
         return true
+    }
+
+    @objc private func applyOrientationPreference() {
+        setNeedsUpdateOfSupportedInterfaceOrientations()
+        guard let windowScene = view.window?.windowScene else { return }
+        let mask = supportedInterfaceOrientations
+        windowScene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
     }
 }

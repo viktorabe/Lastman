@@ -10,7 +10,7 @@ import SpriteKit
 
 /// Node porteur d'une référence vers l'entité, pour remonter du contact physique à la logique.
 final class CharacterNode: SKNode {
-    weak var entity: Character?
+    weak var character: Character?
 }
 
 final class Character {
@@ -24,6 +24,7 @@ final class Character {
     var isAlive: Bool { hp > 0 }
     var hpFraction: CGFloat { max(0, hp / GameConfig.maxHP) }
     var position: CGPoint { node.position }
+    weak var lastDamageSource: Character?
 
     /// Appelé une seule fois quand les PV tombent à 0. Branché par GameScene.
     var onDeath: ((Character) -> Void)?
@@ -32,6 +33,13 @@ final class Character {
     var moveIntent: CGVector = .zero      // amplitude 0...1
     var aimIntent: CGVector?              // direction de tir souhaitée, nil = ne tire pas
     var fireCooldown: TimeInterval = 0
+    private var speedBoostRemaining: TimeInterval = 0
+    private var shieldRemaining: TimeInterval = 0
+    private var shieldRing: SKShapeNode!
+    var isSpeedBoostActive: Bool { speedBoostRemaining > 0 }
+    var isShieldActive: Bool { shieldRemaining > 0 }
+    var speedBoostTimeRemaining: TimeInterval { speedBoostRemaining }
+    var shieldTimeRemaining: TimeInterval { shieldRemaining }
 
     // MARK: État buisson (géré par BushSystem)
     var currentBushID: Int?
@@ -53,12 +61,14 @@ final class Character {
         self.displayName = name
         self.isPlayer = isPlayer
         self.color = color
-        node.entity = self
+        node.character = self
         node.position = position
         node.zPosition = 10
         buildFigure()
         buildHPBar()
+        buildShieldRing()
         buildPhysics()
+        node.setScale(GameConfig.characterVisualScale)
     }
 
     // MARK: - Construction du stickman (trait fin, lisible petit — SPEC §8)
@@ -127,6 +137,16 @@ final class Character {
         bg.addChild(hpBarFill)
     }
 
+    private func buildShieldRing() {
+        shieldRing = SKShapeNode(circleOfRadius: GameConfig.characterRadius + 7)
+        shieldRing.strokeColor = SKColor(red: 0.62, green: 0.85, blue: 1.0, alpha: 0.95)
+        shieldRing.fillColor = SKColor(red: 0.32, green: 0.62, blue: 1.0, alpha: 0.10)
+        shieldRing.lineWidth = 2
+        shieldRing.alpha = 0
+        shieldRing.zPosition = -1
+        node.addChild(shieldRing)
+    }
+
     private func buildPhysics() {
         let body = SKPhysicsBody(circleOfRadius: GameConfig.characterRadius)
         body.allowsRotation = false
@@ -134,7 +154,7 @@ final class Character {
         body.friction = 0
         body.restitution = 0
         body.categoryBitMask = isPlayer ? PhysicsCategory.player : PhysicsCategory.bot
-        body.collisionBitMask = PhysicsCategory.wall | PhysicsCategory.anyCharacter
+        body.collisionBitMask = PhysicsCategory.wall | PhysicsCategory.anyCharacter | PhysicsCategory.breakable
         body.contactTestBitMask = PhysicsCategory.none
         node.physicsBody = body
     }
@@ -144,9 +164,13 @@ final class Character {
     /// Applique le moveIntent au physics body. Réactif, léger easing (SPEC §6.1).
     func applyMovement(dt: TimeInterval) {
         guard isAlive, let body = node.physicsBody else { return }
-        let target = moveIntent * GameConfig.playerSpeed
+        speedBoostRemaining = max(0, speedBoostRemaining - dt)
+        shieldRemaining = max(0, shieldRemaining - dt)
+        let speedMultiplier = speedBoostRemaining > 0 ? GameConfig.speedBoostMultiplier : 1
+        let target = moveIntent * (GameConfig.playerSpeed * speedMultiplier)
         body.velocity = body.velocity.lerped(to: target, t: GameConfig.velocityLerpRate * CGFloat(dt))
 
+        updateShieldVisual()
         updateRunAnimation(speed: body.velocity.length)
         updateFacing()
     }
@@ -193,14 +217,50 @@ final class Character {
         }
     }
 
-    // MARK: - Dégâts
+    // MARK: - Dégâts et soin
 
-    func takeDamage(_ amount: CGFloat, withFX: Bool = true) {
-        guard isAlive else { return }
+    @discardableResult
+    func takeDamage(_ amount: CGFloat, source: Character? = nil, withFX: Bool = true) -> Bool {
+        guard isAlive else { return false }
+        if withFX, shieldRemaining > 0, amount > 0 {
+            shieldRemaining = 0
+            updateShieldVisual()
+            flashShieldBreak()
+            return false
+        }
+        lastDamageSource = source
         hp = max(0, hp - amount)
         updateHPBar()
         if withFX { flashHit() }
         if hp <= 0 { die() }
+        return true
+    }
+
+    @discardableResult
+    func heal(_ amount: CGFloat) -> Bool {
+        guard isAlive, hp < GameConfig.maxHP else { return false }
+        hp = min(GameConfig.maxHP, hp + amount)
+        updateHPBar()
+        flashHeal()
+        return true
+    }
+
+    func applySpeedBoost(duration: TimeInterval) {
+        guard isAlive else { return }
+        speedBoostRemaining = max(speedBoostRemaining, duration)
+        flashBoost()
+    }
+
+    func applyShield(duration: TimeInterval) {
+        guard isAlive else { return }
+        shieldRemaining = max(shieldRemaining, duration)
+        updateShieldVisual()
+        flashShield()
+    }
+
+    func applyImpulse(_ vector: CGVector) {
+        guard isAlive, let body = node.physicsBody else { return }
+        body.velocity = body.velocity + vector
     }
 
     private func updateHPBar() {
@@ -223,6 +283,61 @@ final class Character {
                 }
             },
         ]), withKey: "hitFlash")
+    }
+
+    private func flashHeal() {
+        let healColor = SKColor(red: 0.52, green: 1.0, blue: 0.76, alpha: 1)
+        flashBody(color: healColor, duration: 0.12, key: "healFlash")
+    }
+
+    private func flashBoost() {
+        let boostColor = SKColor(red: 0.45, green: 0.72, blue: 1.0, alpha: 1)
+        flashBody(color: boostColor, duration: 0.16, key: "boostFlash")
+    }
+
+    private func flashShield() {
+        let shieldColor = SKColor(red: 0.62, green: 0.85, blue: 1.0, alpha: 1)
+        flashBody(color: shieldColor, duration: 0.18, key: "shieldFlash")
+    }
+
+    private func flashShieldBreak() {
+        shieldRing.run(.sequence([
+            .group([
+                .scale(to: 1.45, duration: 0.16),
+                .fadeOut(withDuration: 0.16),
+            ]),
+            .scale(to: 1, duration: 0),
+        ]), withKey: "shieldBreak")
+    }
+
+    private func updateShieldVisual() {
+        guard shieldRing != nil else { return }
+        let active = shieldRemaining > 0
+        shieldRing.alpha = active ? 1 : 0
+        if active, shieldRing.action(forKey: "shieldPulse") == nil {
+            shieldRing.run(.repeatForever(.sequence([
+                .scale(to: 1.08, duration: 0.45),
+                .scale(to: 1.0, duration: 0.45),
+            ])), withKey: "shieldPulse")
+        } else if !active {
+            shieldRing.removeAction(forKey: "shieldPulse")
+            shieldRing.setScale(1)
+        }
+    }
+
+    private func flashBody(color: SKColor, duration: TimeInterval, key: String) {
+        for shape in strokeNodes {
+            shape.strokeColor = color
+        }
+        node.run(.sequence([
+            .wait(forDuration: duration),
+            .run { [weak self] in
+                guard let self else { return }
+                for shape in self.strokeNodes {
+                    shape.strokeColor = self.color
+                }
+            },
+        ]), withKey: key)
     }
 
     private func die() {

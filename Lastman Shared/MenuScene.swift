@@ -9,6 +9,10 @@ import SpriteKit
 
 final class MenuScene: SKScene {
 
+    private var weaponButtons: [WeaponStyle: MenuButton] = [:]
+    private var weaponDetailLabel: SKLabelNode!
+    private var footerLabel: SKLabelNode!
+
     static func make(size: CGSize) -> MenuScene {
         let scene = MenuScene(size: size)
         scene.scaleMode = .resizeFill
@@ -32,30 +36,66 @@ final class MenuScene: SKScene {
         subtitle.position = CGPoint(x: 0, y: size.height * 0.22 - 44)
         addChild(subtitle)
 
+        let weaponTitle = makeLabel("Style de tir", size: 17, color: SKColor(white: 1, alpha: 0.62), font: UIFont2.bold)
+        weaponTitle.position = CGPoint(x: 0, y: 52)
+        addChild(weaponTitle)
+
+        let weaponButtonWidth: CGFloat = 104
+        let weaponSpacing: CGFloat = 112
+        for (index, style) in WeaponStyle.allCases.enumerated() {
+            let button = MenuButton(text: style.menuTitle, width: weaponButtonWidth, height: 46, fontSize: 16) { [weak self] in
+                self?.selectWeapon(style)
+            }
+            button.position = CGPoint(x: CGFloat(index - 1) * weaponSpacing, y: 4)
+            addChild(button)
+            weaponButtons[style] = button
+        }
+
+        weaponDetailLabel = makeLabel("", size: 13, color: SKColor(white: 1, alpha: 0.46))
+        weaponDetailLabel.position = CGPoint(x: 0, y: -35)
+        addChild(weaponDetailLabel)
+
         let playButton = MenuButton(text: "JOUER") { [weak self] in
             self?.startMatch()
         }
-        playButton.position = CGPoint(x: 0, y: -20)
+        playButton.position = CGPoint(x: 0, y: -104)
         addChild(playButton)
 
         let settingsButton = MenuButton(text: "RÉGLAGES") { [weak self] in
             self?.openSettings()
         }
-        settingsButton.position = CGPoint(x: 0, y: -94)
+        settingsButton.position = CGPoint(x: 0, y: -174)
         addChild(settingsButton)
 
-        let footer = makeLabel("\(GameSettings.botCount) bots · \(GameSettings.difficulty.label)", size: 14,
-                               color: SKColor(white: 1, alpha: 0.4))
-        footer.position = CGPoint(x: 0, y: -size.height / 2 + 40)
-        addChild(footer)
+        footerLabel = makeLabel("", size: 14, color: SKColor(white: 1, alpha: 0.4))
+        footerLabel.position = CGPoint(x: 0, y: -size.height / 2 + 40)
+        addChild(footerLabel)
+
+        refreshWeaponSelection()
     }
 
     private func startMatch() {
         guard let view else { return }
         let game = GameScene(size: size,
                              difficulty: GameSettings.difficulty,
-                             botCount: GameSettings.botCount)
+                             botCount: GameSettings.botCount,
+                             weaponStyle: GameSettings.weaponStyle)
         view.presentScene(game, transition: .fade(withDuration: 0.4))
+    }
+
+    private func selectWeapon(_ style: WeaponStyle) {
+        GameSettings.weaponStyle = style
+        Haptics.selectionChanged()
+        refreshWeaponSelection()
+    }
+
+    private func refreshWeaponSelection() {
+        let selected = GameSettings.weaponStyle
+        for (style, button) in weaponButtons {
+            button.isHighlighted = style == selected
+        }
+        weaponDetailLabel.text = selected.menuSubtitle
+        footerLabel.text = "\(GameSettings.botCount) bots · \(GameSettings.difficulty.label) · \(selected.label)"
     }
 
     private func openSettings() {

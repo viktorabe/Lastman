@@ -12,9 +12,10 @@ import CoreGraphics
 enum GameConfig {
 
     // MARK: Déplacement (SPEC §6.1)
-    static let playerSpeed: CGFloat = 180          // pt/s, identique joueur et bots
-    static let velocityLerpRate: CGFloat = 12      // réactivité (léger easing, pas d'inertie)
-    static let characterRadius: CGFloat = 13
+    static let playerSpeed: CGFloat = 205          // plus nerveux : le premier duel arrive vite
+    static let velocityLerpRate: CGFloat = 15      // départs et changements de direction plus francs
+    static let characterRadius: CGFloat = 15
+    static let characterVisualScale: CGFloat = 1.18
 
     // MARK: Tir et combat (SPEC §6.2)
     static let fireInterval: TimeInterval = 0.35
@@ -23,6 +24,23 @@ enum GameConfig {
     static let projectileDamage: CGFloat = 20
     static let maxHP: CGFloat = 100
 
+    // MARK: Objets cassables et pickups
+    static let maxBreakables = 5
+    static let breakableRespawnInterval: TimeInterval = 9
+    static let breakableRadius: CGFloat = 18
+    static let breakableHP: CGFloat = 40
+    static let breakableSpawnInset: CGFloat = 90
+    static let breakableMinDistanceFromCharacter: CGFloat = 120
+    static let breakableMinDistanceFromObject: CGFloat = 130
+    static let pickupRadius: CGFloat = 12
+    static let healAmount: CGFloat = 28
+    static let speedBoostDuration: TimeInterval = 4
+    static let speedBoostMultiplier: CGFloat = 1.35
+    static let explosiveRadius: CGFloat = 120
+    static let explosiveDamage: CGFloat = 32
+    static let shieldDuration: TimeInterval = 7
+    static let topThreeZoneShrinkMultiplier: CGFloat = 0.55
+
     // MARK: Buissons (SPEC §6.3)
     static let bushHiddenAlpha: CGFloat = 0.15
     static let bushRevealAfterShot: TimeInterval = 1.0
@@ -30,9 +48,9 @@ enum GameConfig {
 
     // MARK: Zone (SPEC §6.4)
     static let zoneStages: [CGFloat] = [1.0, 0.70, 0.45, 0.25, 0.10, 0.02]
-    static let zoneShrinkInterval: TimeInterval = 20
-    static let zoneShrinkDuration: TimeInterval = 3
-    static let poisonDPS: CGFloat = 5
+    static let zoneShrinkInterval: TimeInterval = 12
+    static let zoneShrinkDuration: TimeInterval = 2.2
+    static let poisonDPS: CGFloat = 7
     static let zoneEdgeMargin: CGFloat = 80        // marge déclenchant avoidZone pendant un palier
 
     // MARK: Bots (SPEC §7)
@@ -40,15 +58,122 @@ enum GameConfig {
     static let targetMemoryDuration: TimeInterval = 2.0
     static let engageDistance: CGFloat = 250       // distance optimale maintenue en attack
     static let fleeSafeDistance: CGFloat = 500     // distance de sécurité pour sortir de flee
+    static let botSeekHealThreshold: CGFloat = 0.45
+    static let botHealObjectiveRadius: CGFloat = 520
 
     // MARK: Arène
     static let arenaSize = CGSize(width: 1200, height: 1600)
-    static let cameraZoom: CGFloat = 1.7           // >1 = dézoomé (on voit plus large que l'écran)
+    static let cameraZoom: CGFloat = 1.42          // personnages et impacts plus présents
+    static let landscapeCameraZoom: CGFloat = 1.12
 
     // MARK: Match
-    static let countdownSeconds = 3
+    static let countdownSeconds = 2
+    static let quickRestartCountdownSeconds = 1
+    static let killStreakWindow: TimeInterval = 7
+    static let hitStopDuration: TimeInterval = 0.055
+    static let killHitStopDuration: TimeInterval = 0.11
     static let botCountRange = 1...9
     static let defaultBotCount = 5
+}
+
+// MARK: - Armes joueur
+
+enum WeaponStyle: Int, CaseIterable {
+    case normal = 0
+    case heavy = 1
+    case sniper = 2
+
+    var label: String {
+        switch self {
+        case .normal: return "Normal"
+        case .heavy: return "Lourd"
+        case .sniper: return "Sniper"
+        }
+    }
+
+    var menuTitle: String {
+        switch self {
+        case .normal: return "NORMAL"
+        case .heavy: return "LOURD"
+        case .sniper: return "SNIPER"
+        }
+    }
+
+    var menuSubtitle: String {
+        switch self {
+        case .normal: return "tir équilibré · portée moyenne"
+        case .heavy: return "grosses balles · courte portée"
+        case .sniper: return "petites balles · longue portée"
+        }
+    }
+
+    var projectileRadius: CGFloat {
+        switch self {
+        case .normal: return 3
+        case .heavy: return 7
+        case .sniper: return 2.6
+        }
+    }
+
+    var projectileDamage: CGFloat {
+        switch self {
+        case .normal: return GameConfig.projectileDamage
+        case .heavy: return 34
+        case .sniper: return 24
+        }
+    }
+
+    var projectileSpeed: CGFloat {
+        switch self {
+        case .normal: return GameConfig.projectileSpeed
+        case .heavy: return 430
+        case .sniper: return 760
+        }
+    }
+
+    var projectileRange: CGFloat {
+        switch self {
+        case .normal: return GameConfig.projectileRange
+        case .heavy: return 220
+        case .sniper: return 640
+        }
+    }
+
+    var fireInterval: TimeInterval {
+        switch self {
+        case .normal: return GameConfig.fireInterval
+        case .heavy: return 0.50
+        case .sniper: return 0.70
+        }
+    }
+
+    var muzzleScale: CGFloat {
+        switch self {
+        case .normal: return 1
+        case .heavy: return 1.65
+        case .sniper: return 0.75
+        }
+    }
+
+    var shotShake: CGFloat {
+        switch self {
+        case .normal: return 0.4
+        case .heavy: return 2.2
+        case .sniper: return 1.0
+        }
+    }
+
+    var recoilImpulse: CGFloat {
+        switch self {
+        case .normal: return 0
+        case .heavy: return 92
+        case .sniper: return 0
+        }
+    }
+
+    var hasAimTrace: Bool {
+        self == .sniper
+    }
 }
 
 // MARK: - Catégories de physique (SPEC §3)
@@ -62,6 +187,8 @@ enum PhysicsCategory {
     static let wall: UInt32             = 1 << 4
     static let bushSensor: UInt32       = 1 << 5
     static let zoneSensor: UInt32       = 1 << 6
+    static let breakable: UInt32        = 1 << 7
+    static let healPickup: UInt32       = 1 << 8
 
     static let anyCharacter: UInt32  = player | bot
     static let anyProjectile: UInt32 = projectilePlayer | projectileBot

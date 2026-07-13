@@ -23,7 +23,9 @@ final class ZoneSystem {
     private var phase: Phase
 
     private let border: SKShapeNode
+    private let previewBorder: SKShapeNode
     private let safeGround: SKShapeNode
+    private var pressureMultiplier: CGFloat = 1
 
     var isShrinking: Bool {
         if case .shrinking = phase { return true }
@@ -58,7 +60,7 @@ final class ZoneSystem {
         parent.addChild(tint)
 
         safeGround = SKShapeNode()
-        safeGround.fillColor = SKColor(white: 0.09, alpha: 1)   // couleur du sol de GameScene
+        safeGround.fillColor = SKColor(red: 0.075, green: 0.085, blue: 0.095, alpha: 1)   // couleur du sol de GameScene
         safeGround.strokeColor = .clear
         safeGround.zPosition = 0.5
         parent.addChild(safeGround)
@@ -71,6 +73,15 @@ final class ZoneSystem {
         border.glowWidth = 2
         parent.addChild(border)
 
+        // Prochain cercle : lisible mais discret, pour anticiper la rotation.
+        previewBorder = SKShapeNode()
+        previewBorder.strokeColor = SKColor(red: 0.92, green: 0.96, blue: 1.0, alpha: 0.34)
+        previewBorder.lineWidth = 2
+        previewBorder.lineCap = .round
+        previewBorder.zPosition = 24
+        previewBorder.glowWidth = 1
+        parent.addChild(previewBorder)
+
         updateShapes()
     }
 
@@ -79,26 +90,62 @@ final class ZoneSystem {
                                 width: radius * 2, height: radius * 2)
         border.path = CGPath(ellipseIn: circleRect, transform: nil)
         safeGround.path = CGPath(ellipseIn: circleRect, transform: nil)
+        updatePreviewShape()
+    }
+
+    private func updatePreviewShape() {
+        guard nextStageIndex < GameConfig.zoneStages.count else {
+            previewBorder.path = nil
+            return
+        }
+
+        let previewRadius = initialRadius * GameConfig.zoneStages[nextStageIndex]
+        previewBorder.path = dashedCirclePath(center: center, radius: previewRadius)
+        previewBorder.alpha = isShrinking ? 0.16 : 1
+    }
+
+    private func dashedCirclePath(center: CGPoint, radius: CGFloat) -> CGPath {
+        let path = CGMutablePath()
+        let dashCount = max(18, Int(radius / 18))
+        let step = (2 * CGFloat.pi) / CGFloat(dashCount)
+        let dashLength = step * 0.56
+
+        for index in 0..<dashCount {
+            let start = CGFloat(index) * step
+            let startPoint = CGPoint(x: center.x + cos(start) * radius,
+                                     y: center.y + sin(start) * radius)
+            path.move(to: startPoint)
+            path.addArc(center: center,
+                        radius: radius,
+                        startAngle: start,
+                        endAngle: start + dashLength,
+                        clockwise: false)
+        }
+
+        return path
     }
 
     // MARK: - Boucle
 
     func update(dt: TimeInterval, characters: [Character]) {
+        let adjustedDT = dt / TimeInterval(pressureMultiplier)
         switch phase {
         case .waiting(let remaining):
-            let left = remaining - dt
+            let left = remaining - adjustedDT
             if left <= 0, nextStageIndex < GameConfig.zoneStages.count {
                 let target = initialRadius * GameConfig.zoneStages[nextStageIndex]
                 phase = .shrinking(from: radius, to: target, elapsed: 0)
                 nextStageIndex += 1
+                updatePreviewShape()
             } else if left <= 0 {
                 phase = .done
+                updatePreviewShape()
             } else {
                 phase = .waiting(remaining: left)
             }
 
         case .shrinking(let from, let to, let elapsed):
-            let t = elapsed + dt
+            let t = elapsed + adjustedDT
             let progress = min(1, t / GameConfig.zoneShrinkDuration)
             // Ease in-out pour une fermeture douce.
             let eased = CGFloat(progress * progress * (3 - 2 * progress))
@@ -109,6 +156,7 @@ final class ZoneSystem {
                 phase = nextStageIndex < GameConfig.zoneStages.count
                     ? .waiting(remaining: GameConfig.zoneShrinkInterval)
                     : .done
+                updatePreviewShape()
             } else {
                 phase = .shrinking(from: from, to: to, elapsed: t)
             }
@@ -122,6 +170,14 @@ final class ZoneSystem {
             if isOutside(character.position) {
                 character.takeDamage(GameConfig.poisonDPS * CGFloat(dt), withFX: false)
             }
+        }
+    }
+
+    func intensifyFinale() {
+        guard pressureMultiplier > GameConfig.topThreeZoneShrinkMultiplier else { return }
+        pressureMultiplier = GameConfig.topThreeZoneShrinkMultiplier
+        if case .waiting(let remaining) = phase {
+            phase = .waiting(remaining: max(3, remaining * TimeInterval(GameConfig.topThreeZoneShrinkMultiplier)))
         }
     }
 

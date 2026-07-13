@@ -38,12 +38,14 @@ final class BushSystem {
         container.position = center
         container.zPosition = 20
 
-        let outer = SKShapeNode(ellipseOf: CGSize(width: radii.width * 2, height: radii.height * 2))
+        let radius = min(radii.width, radii.height)
+
+        let outer = SKShapeNode(circleOfRadius: radius)
         outer.fillColor = SKColor(white: 1, alpha: 0.10)
         outer.strokeColor = SKColor(white: 1, alpha: 0.30)
         outer.lineWidth = 1.5
 
-        let inner = SKShapeNode(ellipseOf: CGSize(width: radii.width * 1.2, height: radii.height * 1.2))
+        let inner = SKShapeNode(circleOfRadius: radius * 0.6)
         inner.fillColor = SKColor(white: 1, alpha: 0.07)
         inner.strokeColor = SKColor(white: 1, alpha: 0.15)
         inner.lineWidth = 1

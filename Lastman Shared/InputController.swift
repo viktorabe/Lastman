@@ -24,7 +24,7 @@ final class InputController {
 
     /// Couche HUD (enfant de la caméra) dans laquelle vivent les joysticks.
     private unowned let hud: SKNode
-    private let screenSize: CGSize
+    private var screenSize: CGSize
 
     private var moveTouch: UITouch?
     private var aimTouch: UITouch?
@@ -43,6 +43,11 @@ final class InputController {
         hud.addChild(aimStick)
     }
 
+    func updateScreenSize(_ screenSize: CGSize) {
+        self.screenSize = screenSize
+        releaseAll()
+    }
+
     // MARK: - Touches (transmis par GameScene ; coordonnées HUD, origine au centre de l'écran)
 
     func touchesBegan(_ touches: Set<UITouch>) {
@@ -54,9 +59,11 @@ final class InputController {
             if p.x < 0, moveTouch == nil {
                 moveTouch = touch
                 moveStick.activate(at: p)
+                Haptics.joystickStarted()
             } else if p.x >= 0, aimTouch == nil {
                 aimTouch = touch
                 aimStick.activate(at: p)
+                Haptics.joystickStarted()
             }
         }
     }

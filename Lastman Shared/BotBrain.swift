@@ -15,7 +15,46 @@ protocol BotWorld: AnyObject {
     var allCharacters: [Character] { get }
     var zone: ZoneSystem { get }
     var bushSystem: BushSystem { get }
+    func healingObjective(for character: Character) -> HealingObjective?
     func lineOfSightClear(from: CGPoint, to: CGPoint) -> Bool
+}
+
+enum BotPersonality: CaseIterable {
+    case aggressive
+    case cautious
+    case opportunist
+
+    var label: String {
+        switch self {
+        case .aggressive: return "Aggro"
+        case .cautious: return "Prudent"
+        case .opportunist: return "Opportuniste"
+        }
+    }
+
+    var aggressionMultiplier: CGFloat {
+        switch self {
+        case .aggressive: return 1.22
+        case .cautious: return 0.88
+        case .opportunist: return 1.0
+        }
+    }
+
+    var healThresholdOffset: CGFloat {
+        switch self {
+        case .aggressive: return -0.08
+        case .cautious: return 0.16
+        case .opportunist: return 0.04
+        }
+    }
+
+    var strafeMultiplier: CGFloat {
+        switch self {
+        case .aggressive: return 1.0
+        case .cautious: return 0.72
+        case .opportunist: return 0.9
+        }
+    }
 }
 
 // MARK: - Cerveau
@@ -25,6 +64,7 @@ final class BotBrain {
     unowned let bot: Character
     unowned let world: BotWorld
     let difficulty: Difficulty
+    let personality: BotPersonality
 
     private var machine: GKStateMachine!
 
@@ -40,11 +80,16 @@ final class BotBrain {
 
     var hasThreat: Bool { visibleTarget != nil || lastKnownPosition != nil }
     var aimErrorRadians: CGFloat { difficulty.aimErrorDegrees.degreesToRadians }
+    var aggressionDistance: CGFloat { difficulty.aggression * personality.aggressionMultiplier }
+    var seekHealThreshold: CGFloat {
+        min(0.82, max(0.18, GameConfig.botSeekHealThreshold + personality.healThresholdOffset))
+    }
 
-    init(bot: Character, world: BotWorld, difficulty: Difficulty) {
+    init(bot: Character, world: BotWorld, difficulty: Difficulty, personality: BotPersonality) {
         self.bot = bot
         self.world = world
         self.difficulty = difficulty
+        self.personality = personality
         self.reactionRemaining = difficulty.reactionDelay
 
         machine = GKStateMachine(states: [
@@ -52,6 +97,7 @@ final class BotBrain {
             BotWanderState(brain: self),
             BotChaseState(brain: self),
             BotAttackState(brain: self),
+            BotSeekHealState(brain: self),
             BotFleeState(brain: self),
             BotAvoidZoneState(brain: self),
             BotDeadState(brain: self),
@@ -78,9 +124,13 @@ final class BotBrain {
         updatePerception(dt: dt)
 
         // Overrides de priorité (SPEC §7.3) :
-        // avoidZone est prioritaire absolu, flee passe devant le combat.
+        // avoidZone est prioritaire absolu, puis un bot blessé cherche à se soigner.
         if world.zone.isInDanger(bot.position) {
             enter(BotAvoidZoneState.self)
+        } else if bot.hpFraction < seekHealThreshold,
+                  world.healingObjective(for: bot) != nil,
+                  !(machine.currentState is BotAvoidZoneState) {
+            enter(BotSeekHealState.self)
         } else if bot.hpFraction < difficulty.fleeThreshold, hasThreat,
                   !(machine.currentState is BotAvoidZoneState) {
             enter(BotFleeState.self)
@@ -210,7 +260,7 @@ final class BotChaseState: BotState {
     override func tick(dt: TimeInterval) {
         if let target = brain.visibleTarget {
             let dist = bot.position.distance(to: target.position)
-            if dist <= brain.difficulty.aggression,
+            if dist <= brain.aggressionDistance,
                brain.world.lineOfSightClear(from: bot.position, to: target.position) {
                 brain.enter(BotAttackState.self)
                 return
@@ -245,7 +295,7 @@ final class BotAttackState: BotState {
             return
         }
         let dist = bot.position.distance(to: target.position)
-        if dist > brain.difficulty.aggression
+        if dist > brain.aggressionDistance
             || !brain.world.lineOfSightClear(from: bot.position, to: target.position) {
             bot.aimIntent = nil
             brain.enter(BotChaseState.self)
@@ -261,7 +311,7 @@ final class BotAttackState: BotState {
         let toTarget = direction(to: target.position)
         let radialAmount = min(max((dist - GameConfig.engageDistance) / 120, -1), 1)
         let movement = toTarget * radialAmount + toTarget.perpendicular * (strafeSign * 0.8)
-        bot.moveIntent = movement.normalized * 0.9
+        bot.moveIntent = movement.normalized * (0.9 * brain.personality.strafeMultiplier)
 
         // Tir avec bruit gaussien sur l'angle (SPEC §7.4).
         let aimAngle = toTarget.angle + gaussianRandom(stdDev: brain.aimErrorRadians)
@@ -302,6 +352,41 @@ final class BotFleeState: BotState {
             bot.moveIntent = direction(to: bush.center)
         } else {
             bot.moveIntent = away
+        }
+    }
+}
+
+/// PV bas : conteste un soin déjà au sol, ou casse une caisse de soin proche.
+final class BotSeekHealState: BotState {
+    override func begin() {
+        bot.aimIntent = nil
+    }
+
+    override func tick(dt: TimeInterval) {
+        if bot.hpFraction > brain.seekHealThreshold + 0.18 {
+            brain.enter(BotWanderState.self)
+            return
+        }
+
+        guard let objective = brain.world.healingObjective(for: bot) else {
+            brain.enter(brain.hasThreat ? BotFleeState.self : BotWanderState.self)
+            return
+        }
+
+        let dist = bot.position.distance(to: objective.position)
+        switch objective.source {
+        case .pickup:
+            bot.aimIntent = nil
+            bot.moveIntent = dist < 16 ? .zero : direction(to: objective.position)
+
+        case .breakable:
+            let toCrate = direction(to: objective.position)
+            bot.aimIntent = toCrate
+            if dist > min(GameConfig.projectileRange * 0.8, 280) {
+                bot.moveIntent = toCrate * 0.8
+            } else {
+                bot.moveIntent = .zero
+            }
         }
     }
 }
