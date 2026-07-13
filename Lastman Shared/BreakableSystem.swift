@@ -100,7 +100,11 @@ final class BreakableSystem {
     private var breakables: [BreakableNode] = []
     private var pickups: [PickupNode] = []
     private var nextSpawnTime: TimeInterval?
-    private var randomGenerator: SeededGenerator
+    private var nextSpawnAnchorIndex = 0
+    private var nextKindIndex = 0
+    private let kindRotation: [BreakableKind] = [
+        .heal, .speed, .heal, .shield, .heal, .explosive,
+    ]
     var onPlayerPickupCollected: (() -> Void)?
     var onPlayerBreakableDestroyed: (() -> Void)?
     var onDamageDealt: ((Character, Character, CGFloat) -> Void)?
@@ -108,18 +112,15 @@ final class BreakableSystem {
     init(
         worldLayer: SKNode,
         arenaRect: CGRect,
-        blockedAreas: [(center: CGPoint, radius: CGFloat)],
-        seed: UInt64? = nil
+        blockedAreas: [(center: CGPoint, radius: CGFloat)]
     ) {
         self.worldLayer = worldLayer
         self.arenaRect = arenaRect
         self.blockedAreas = blockedAreas
-        self.randomGenerator = SeededGenerator(seed: seed.map { $0 ^ 0xB0B0 } ?? UInt64.random(in: 1...UInt64.max))
     }
 
     func spawnInitial(characters: [Character]) {
-        let count = Int.random(in: GameConfig.initialBreakableCountRange, using: &randomGenerator)
-        for _ in 0..<count {
+        for _ in 0..<GameConfig.initialBreakableCount {
             spawnBreakableIfPossible(near: characters)
         }
     }
@@ -136,10 +137,7 @@ final class BreakableSystem {
 
         let missingCount = GameConfig.maxBreakables - breakables.count
         if missingCount > 0 {
-            let batchSize = min(missingCount, Int.random(in: GameConfig.breakableRespawnBatchRange, using: &randomGenerator))
-            for _ in 0..<batchSize {
-                spawnBreakableIfPossible(near: characters)
-            }
+            spawnBreakableIfPossible(near: characters)
         }
         scheduleNextSpawn(after: currentTime)
     }
@@ -223,8 +221,10 @@ final class BreakableSystem {
     }
 
     private func spawnBreakableIfPossible(near characters: [Character]) {
-        guard let point = randomSpawnPoint(avoiding: characters) else { return }
-        let breakable = makeBreakable(kind: randomKind())
+        guard let point = nextSpawnPoint(avoiding: characters) else { return }
+        let kind = kindRotation[nextKindIndex % kindRotation.count]
+        nextKindIndex += 1
+        let breakable = makeBreakable(kind: kind)
         breakable.position = point
         breakables.append(breakable)
         worldLayer.addChild(breakable)
@@ -251,34 +251,25 @@ final class BreakableSystem {
         ]))
     }
 
-    private func randomKind() -> BreakableKind {
-        let activeHealCount = breakables.reduce(into: 0) { count, breakable in
-            if breakable.parent != nil, breakable.kind == .heal {
-                count += 1
-            }
-        }
-        if activeHealCount < GameConfig.minimumHealBreakables {
-            return .heal
-        }
-
-        let roll = CGFloat.random(in: 0...1, using: &randomGenerator)
-        if roll < 0.55 { return .heal }
-        if roll < 0.75 { return .speed }
-        if roll < 0.90 { return .shield }
-        return .explosive
-    }
-
     private func scheduleNextSpawn(after currentTime: TimeInterval) {
-        nextSpawnTime = currentTime + TimeInterval.random(in: GameConfig.breakableRespawnDelayRange, using: &randomGenerator)
+        nextSpawnTime = currentTime + GameConfig.breakableRespawnInterval
     }
 
-    private func randomSpawnPoint(avoiding characters: [Character]) -> CGPoint? {
-        let inset = arenaRect.insetBy(dx: GameConfig.breakableSpawnInset,
-                                      dy: GameConfig.breakableSpawnInset)
-        for _ in 0..<40 {
+    private func nextSpawnPoint(avoiding characters: [Character]) -> CGPoint? {
+        // Emplacements fixes et symétriques : les ressources deviennent des
+        // objectifs de carte mémorisables, pas un tirage favorable ou défavorable.
+        let anchors: [(CGFloat, CGFloat)] = [
+            (0.30, 0.14), (0.70, 0.14),
+            (0.14, 0.40), (0.50, 0.40), (0.86, 0.40),
+            (0.22, 0.65), (0.50, 0.64), (0.78, 0.65),
+            (0.30, 0.86), (0.70, 0.86),
+        ]
+        for _ in anchors.indices {
+            let anchor = anchors[nextSpawnAnchorIndex % anchors.count]
+            nextSpawnAnchorIndex += 1
             let point = CGPoint(
-                x: CGFloat.random(in: inset.minX...inset.maxX, using: &randomGenerator),
-                y: CGFloat.random(in: inset.minY...inset.maxY, using: &randomGenerator)
+                x: arenaRect.minX + arenaRect.width * anchor.0,
+                y: arenaRect.minY + arenaRect.height * anchor.1
             )
             if isSpawnPointClear(point, characters: characters) {
                 return point

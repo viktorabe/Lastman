@@ -28,13 +28,10 @@ enum GameConfig {
 
     // MARK: Objets cassables et pickups
     static let maxBreakables = 9
-    static let initialBreakableCountRange = 7...9
-    static let minimumHealBreakables = 3
-    static let breakableRespawnDelayRange: ClosedRange<TimeInterval> = 4.5...9.5
-    static let breakableRespawnBatchRange = 1...2
+    static let initialBreakableCount = 8
+    static let breakableRespawnInterval: TimeInterval = 7
     static let breakableRadius: CGFloat = 18
     static let breakableHP: CGFloat = 40
-    static let breakableSpawnInset: CGFloat = 90
     static let breakableMinDistanceFromCharacter: CGFloat = 120
     static let breakableMinDistanceFromObject: CGFloat = 130
     static let pickupRadius: CGFloat = 12
@@ -223,12 +220,13 @@ enum Difficulty: Int, CaseIterable {
         }
     }
 
-    /// Écart-type du bruit gaussien ajouté à l'angle de tir (degrés).
-    var aimErrorDegrees: CGFloat {
+    /// Vitesse à laquelle la visée suit une cible mobile.
+    /// Une valeur plus basse laisse davantage de temps pour esquiver.
+    var aimTrackingRate: CGFloat {
         switch self {
-        case .easy: return 10
-        case .medium: return 4
-        case .hard: return 1.5
+        case .easy: return 2.2
+        case .medium: return 4.0
+        case .hard: return 6.0
         }
     }
 

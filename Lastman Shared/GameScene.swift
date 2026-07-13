@@ -86,7 +86,7 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
         self.weaponStyle = weaponStyle
         self.quickStart = quickStart
         self.matchMode = matchMode
-        self.playerSpawnPoint = GameScene.makePlayerSpawnPoint(seed: matchMode.dailyChallenge?.seed)
+        self.playerSpawnPoint = CGPoint(x: 600, y: 180)
         super.init(size: size)
         scaleMode = .resizeFill
     }
@@ -134,22 +134,6 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
         guard view != nil else { return }
         layoutHUD()
         input?.updateScreenSize(size)
-    }
-
-    private static func makePlayerSpawnPoint(seed: UInt64?) -> CGPoint {
-        let spawnPoints = [
-            CGPoint(x: 600, y: 180),
-            CGPoint(x: 185, y: 315),
-            CGPoint(x: 1015, y: 330),
-            CGPoint(x: 250, y: 1180),
-            CGPoint(x: 930, y: 1220),
-            CGPoint(x: 600, y: 1410),
-        ]
-        guard let seed else {
-            return spawnPoints.randomElement() ?? CGPoint(x: 600, y: 180)
-        }
-        var generator = SeededGenerator(seed: seed ^ 0xA11CE)
-        return spawnPoints[Int.random(in: 0..<spawnPoints.count, using: &generator)]
     }
 
     private var arenaRect: CGRect {
@@ -276,20 +260,8 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
     }
 
     private func buildZone() {
-        // Centre légèrement aléatoire autour du centre d'arène (SPEC §6.4).
-        let center: CGPoint
-        if let challenge = matchMode.dailyChallenge {
-            var generator = SeededGenerator(seed: challenge.seed ^ 0x20AE)
-            center = CGPoint(
-                x: arenaRect.midX + CGFloat.random(in: -80...80, using: &generator),
-                y: arenaRect.midY + CGFloat.random(in: -80...80, using: &generator)
-            )
-        } else {
-            center = CGPoint(
-                x: arenaRect.midX + .random(in: -80...80),
-                y: arenaRect.midY + .random(in: -80...80)
-            )
-        }
+        // Centre fixe : la pression de la zone est lisible et identique à chaque partie.
+        let center = CGPoint(x: arenaRect.midX, y: arenaRect.midY)
         // Rayon initial couvrant toute l'arène depuis le centre choisi.
         let corners = [
             CGPoint(x: 0, y: 0),
@@ -310,8 +282,7 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
     private func buildBreakables() {
         breakableImpl = BreakableSystem(worldLayer: worldLayer,
                                         arenaRect: arenaRect,
-                                        blockedAreas: obstacleLayout,
-                                        seed: matchMode.dailyChallenge?.seed)
+                                        blockedAreas: obstacleLayout)
         breakableImpl.onPlayerPickupCollected = { [weak self] in
             self?.state.recordPlayerPickup()
         }
@@ -347,7 +318,8 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
                                 position: botSpawns[i])
             state.addBot(bot)
             worldLayer.addChild(bot.node)
-            brains.append(BotBrain(bot: bot, world: self, difficulty: difficulty, personality: personality))
+            brains.append(BotBrain(bot: bot, world: self, difficulty: difficulty,
+                                   personality: personality, patrolOffset: i))
         }
 
         for character in state.characters {
@@ -640,6 +612,14 @@ final class GameScene: SKScene, SKPhysicsContactDelegate, BotWorld {
 
     private func updatePlayerAutoShoot(dt: TimeInterval) {
         guard state.player.isAlive else {
+            resetAutoShootAcquisition()
+            return
+        }
+
+        // La visée manuelle est la règle. L'assistance reste disponible en
+        // partie standard, mais jamais dans le défi quotidien classé.
+        guard matchMode == .tutorial
+                || (matchMode == .standard && GameSettings.autoShootEnabled) else {
             resetAutoShootAcquisition()
             return
         }

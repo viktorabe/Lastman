@@ -65,6 +65,8 @@ final class BotBrain {
     unowned let world: BotWorld
     let difficulty: Difficulty
     let personality: BotPersonality
+    private let patrolOffset: Int
+    private var patrolStep = 0
 
     private var machine: GKStateMachine!
 
@@ -79,17 +81,18 @@ final class BotBrain {
     private var isAlerted = false
 
     var hasThreat: Bool { visibleTarget != nil || lastKnownPosition != nil }
-    var aimErrorRadians: CGFloat { difficulty.aimErrorDegrees.degreesToRadians }
     var aggressionDistance: CGFloat { difficulty.aggression * personality.aggressionMultiplier }
     var seekHealThreshold: CGFloat {
         min(0.82, max(0.18, GameConfig.botSeekHealThreshold + personality.healThresholdOffset))
     }
 
-    init(bot: Character, world: BotWorld, difficulty: Difficulty, personality: BotPersonality) {
+    init(bot: Character, world: BotWorld, difficulty: Difficulty,
+         personality: BotPersonality, patrolOffset: Int) {
         self.bot = bot
         self.world = world
         self.difficulty = difficulty
         self.personality = personality
+        self.patrolOffset = patrolOffset
         self.reactionRemaining = difficulty.reactionDelay
 
         machine = GKStateMachine(states: [
@@ -103,6 +106,12 @@ final class BotBrain {
             BotDeadState(brain: self),
         ])
         enter(BotIdleState.self)
+    }
+
+    func nextPatrolPoint() -> CGPoint {
+        let point = world.zone.patrolPoint(index: patrolOffset + patrolStep * 5)
+        patrolStep += 1
+        return point
     }
 
     /// Transition + hook d'entrée (begin), sans dépendre des overrides GKState.
@@ -208,7 +217,11 @@ final class BotIdleState: BotState {
     private var remaining: TimeInterval = 0
 
     override func begin() {
-        remaining = .random(in: 0.2...0.6)
+        switch brain.personality {
+        case .aggressive: remaining = 0.2
+        case .opportunist: remaining = 0.4
+        case .cautious: remaining = 0.6
+        }
         bot.moveIntent = .zero
         bot.aimIntent = nil
     }
@@ -223,7 +236,7 @@ final class BotIdleState: BotState {
     }
 }
 
-/// Se déplace vers un point aléatoire dans la zone safe, cherche une cible en route.
+/// Suit une route de patrouille stable dans la zone safe et cherche une cible en route.
 final class BotWanderState: BotState {
     private var destination: CGPoint = .zero
     private var repickTimer: TimeInterval = 0
@@ -234,8 +247,8 @@ final class BotWanderState: BotState {
     }
 
     private func pickDestination() {
-        destination = brain.world.zone.randomSafePoint()
-        repickTimer = .random(in: 3.5...6)
+        destination = brain.nextPatrolPoint()
+        repickTimer = 4.5
     }
 
     override func tick(dt: TimeInterval) {
@@ -279,14 +292,21 @@ final class BotChaseState: BotState {
     }
 }
 
-/// À portée + ligne de vue : strafe en tirant avec aimError, maintient ~250 pt.
+/// À portée + ligne de vue : strafe et tracking progressif, maintient ~250 pt.
 final class BotAttackState: BotState {
     private var strafeSign: CGFloat = 1
     private var strafeFlipTimer: TimeInterval = 0
+    private var trackedAim: CGVector = .zero
+    private var hasTrackedAim = false
 
     override func begin() {
-        strafeSign = Bool.random() ? 1 : -1
-        strafeFlipTimer = .random(in: 0.8...1.6)
+        switch brain.personality {
+        case .cautious: strafeSign = -1
+        case .aggressive, .opportunist: strafeSign = 1
+        }
+        strafeFlipTimer = 1.2
+        trackedAim = .zero
+        hasTrackedAim = false
         // Le joueur voit le bot se mettre en joue avant le premier projectile.
         // Une esquive volontaire remplace ainsi une collision décidée au hasard.
         bot.fireCooldown = max(bot.fireCooldown, GameConfig.botAimWindup)
@@ -309,16 +329,25 @@ final class BotAttackState: BotState {
         strafeFlipTimer -= dt
         if strafeFlipTimer <= 0 {
             strafeSign *= -1
-            strafeFlipTimer = .random(in: 0.8...1.6)
+            strafeFlipTimer = 1.2
         }
         let toTarget = direction(to: target.position)
         let radialAmount = min(max((dist - GameConfig.engageDistance) / 120, -1), 1)
         let movement = toTarget * radialAmount + toTarget.perpendicular * (strafeSign * 0.8)
         bot.moveIntent = movement.normalized * (0.9 * brain.personality.strafeMultiplier)
 
-        // Tir avec bruit gaussien sur l'angle (SPEC §7.4).
-        let aimAngle = toTarget.angle + gaussianRandom(stdDev: brain.aimErrorRadians)
-        bot.aimIntent = CGVector(angle: aimAngle)
+        // Tracking continu et déterministe : le joueur peut lire la visée et
+        // esquiver, au lieu de subir un jet de précision à chaque frame.
+        if !hasTrackedAim {
+            trackedAim = toTarget
+            hasTrackedAim = true
+        } else {
+            trackedAim = trackedAim.lerped(
+                to: toTarget,
+                t: brain.difficulty.aimTrackingRate * CGFloat(dt)
+            ).normalized
+        }
+        bot.aimIntent = trackedAim
     }
 }
 

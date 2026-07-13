@@ -13,6 +13,7 @@ enum GameSettings {
     private static let hapticsEnabledKey = "lastman.hapticsEnabled"
     private static let soundEnabledKey = "lastman.soundEnabled"
     private static let landscapeModeEnabledKey = "lastman.landscapeModeEnabled"
+    private static let autoShootEnabledKey = "lastman.autoShootEnabled"
     private static let weaponStyleKey = "lastman.weaponStyle"
     private static let bestSurvivalTimeKey = "lastman.bestSurvivalTime"
     static let orientationPreferenceDidChange = Notification.Name("lastman.orientationPreferenceDidChange")
@@ -69,6 +70,16 @@ enum GameSettings {
         set {
             UserDefaults.standard.set(newValue, forKey: landscapeModeEnabledKey)
             NotificationCenter.default.post(name: orientationPreferenceDidChange, object: nil)
+        }
+    }
+
+    static var autoShootEnabled: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: autoShootEnabledKey) != nil else { return false }
+            return UserDefaults.standard.bool(forKey: autoShootEnabledKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: autoShootEnabledKey)
         }
     }
 

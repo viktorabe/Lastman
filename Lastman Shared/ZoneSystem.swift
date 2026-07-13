@@ -204,10 +204,11 @@ final class ZoneSystem {
         return isShrinking && distanceToEdge(from: point) < GameConfig.zoneEdgeMargin
     }
 
-    /// Point aléatoire confortablement dans la zone safe (pour wander).
-    func randomSafePoint() -> CGPoint {
-        let r = radius * CGFloat.random(in: 0.1...0.75)
-        let a = CGFloat.random(in: 0...(2 * .pi))
+    /// Point de patrouille déterministe dans la zone safe.
+    func patrolPoint(index: Int) -> CGPoint {
+        let normalizedIndex = ((index % 12) + 12) % 12
+        let r = radius * (normalizedIndex.isMultiple(of: 2) ? 0.38 : 0.52)
+        let a = CGFloat(normalizedIndex) * (2 * .pi / 12)
         return CGPoint(x: center.x + cos(a) * r, y: center.y + sin(a) * r)
     }
 }

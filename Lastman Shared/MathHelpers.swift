@@ -2,7 +2,7 @@
 //  MathHelpers.swift
 //  Lastman
 //
-//  Petites extensions vecteurs/points + bruit gaussien pour l'aimError.
+//  Petites extensions vecteurs/points.
 //
 
 import CoreGraphics
@@ -63,16 +63,4 @@ extension CGPoint {
     static func + (p: CGPoint, v: CGVector) -> CGPoint {
         CGPoint(x: p.x + v.dx, y: p.y + v.dy)
     }
-}
-
-/// Bruit gaussien (Box-Muller). Utilisé pour l'aimError des bots (SPEC §7.4).
-func gaussianRandom(mean: CGFloat = 0, stdDev: CGFloat = 1) -> CGFloat {
-    let u1 = CGFloat.random(in: 0.0001...1)
-    let u2 = CGFloat.random(in: 0...1)
-    let z = sqrt(-2 * log(u1)) * cos(2 * .pi * u2)
-    return mean + z * stdDev
-}
-
-extension CGFloat {
-    var degreesToRadians: CGFloat { self * .pi / 180 }
 }

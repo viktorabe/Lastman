@@ -87,7 +87,7 @@ Note Claude Code : viser la séparation logique vs rendu. Le state du jeu (posit
 - Le joueur voit toujours son propre stickman normalement.
 
 ### 6.4 Zone / battle royale
-- Zone safe = cercle centré (centre fixe ou légèrement aléatoire). Rayon initial couvre toute l'arène.
+- Zone safe = cercle à centre fixe. Rayon initial couvre toute l'arène.
 - **Paliers de rétrécissement** : ex. toutes les 20 s, le rayon cible se réduit (100% → 70% → 45% → 25% → 10% → point). Transition animée sur quelques secondes entre deux paliers.
 - **Hors zone** : dégâts de poison ~5 PV/s, tint visuel (assombrissement + voile coloré au sol hors zone).
 - Bord de zone visible en permanence (cercle net).
@@ -108,9 +108,9 @@ Chaque bot possède sa propre `GKStateMachine`. La perception et la difficulté 
 | État | Comportement | 
 |------|--------------|
 | `idle` | Immobile, scanne. Très court, transitoire au spawn. |
-| `wander` | Se déplace vers un point aléatoire dans la zone safe. Cherche une cible en route. |
+| `wander` | Suit une route de patrouille fixe dans la zone safe. Cherche une cible en route. |
 | `chase` | Cible connue mais hors de portée de tir : avance pour entrer à portée. |
-| `attack` | Cible à portée + ligne de vue : strafe (déplacement latéral) tout en tirant vers la cible avec `aimError`. Maintient une distance d'engagement optimale (~250 pt). |
+| `attack` | Cible à portée + ligne de vue : strafe (déplacement latéral) tout en suivant progressivement la cible. Maintient une distance d'engagement optimale (~250 pt). |
 | `flee` | PV < `fleeThreshold` : s'éloigne de la cible, vise un buisson ou de la distance pour se soigner/se cacher. |
 | `avoidZone` | **Priorité absolue.** Hors zone safe, ou la zone va se refermer sur sa position : se dirige vers le centre safe. Interrompt tout combat. |
 | `dead` | Désactivé, animation de mort, retiré de la logique. |
@@ -134,12 +134,12 @@ Un seul curseur de difficulté (Facile / Moyen / Difficile) pilote ces valeurs :
 | Paramètre | Facile | Moyen | Difficile |
 |-----------|--------|-------|-----------|
 | `reactionDelay` (s) | 0.6 | 0.35 | 0.15 |
-| `aimError` (écart-type, °) | 18 | 9 | 3 |
+| `aimTrackingRate` (suivi/s) | 2,2 | 4 | 6 |
 | `aggression` (portée d'engagement, pt) | 250 | 350 | 450 |
 | `fleeThreshold` (% PV) | 50 | 30 | 15 |
 | `botCount` (défaut) | 3 | 5 | 7 |
 
-`aimError` = bruit gaussien ajouté à l'angle de tir. C'est le levier principal de « crédibilité » : un bot précis à 100 % est frustrant, un bot qui rate parfois est humain.
+`aimTrackingRate` contrôle la vitesse à laquelle le canon rattrape une cible mobile. Les tirs ne reposent plus sur un jet de précision : le joueur peut lire la visée, changer de trajectoire et esquiver volontairement.
 
 ## 8. Direction visuelle
 
@@ -191,7 +191,7 @@ Garder `GameState` comme source de vérité ; les `SKNode` reflètent l'état, n
 ## 11. Constantes à exposer (pour tuner vite)
 
 Regrouper dans un seul fichier `GameConfig.swift` :
-`playerSpeed, projectileSpeed, projectileRange, projectileDamage, fireInterval, maxHP, poisonDPS, visionRadius, engageDistance, zoneStages[], zoneShrinkInterval, reactionDelay, aimError, aggression, fleeThreshold, botCount`.
+`playerSpeed, projectileSpeed, projectileRange, projectileDamage, fireInterval, maxHP, poisonDPS, visionRadius, engageDistance, zoneStages[], zoneShrinkInterval, reactionDelay, aimTrackingRate, aggression, fleeThreshold, botCount`.
 
 ## 12. v2+ (notées, pas construites)
 
